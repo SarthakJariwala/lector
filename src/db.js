@@ -89,15 +89,18 @@ export async function upsertArticles(feedUrl, feedName, items) {
         [id, feedUrl, feedName, item.title, item.link, item.published, publishedTs, item.content, item.author, now]
       );
     }
+    // Prune per-feed (not globally) so adding/refreshing one feed can't wipe another
     await db.execute(
       `DELETE FROM articles
        WHERE is_starred = 0
+         AND feed_url = $1
          AND id NOT IN (
            SELECT id FROM articles
-           WHERE is_starred = 0
+           WHERE is_starred = 0 AND feed_url = $1
            ORDER BY published_ts DESC, fetched_at DESC
            LIMIT 500
-         )`
+         )`,
+      [feedUrl]
     );
   });
 }

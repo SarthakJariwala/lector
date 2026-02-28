@@ -102,12 +102,12 @@ export default function RSSReader() {
   const [viewFilter, setViewFilter] = useState("all");
   const [hydrated, setHydrated] = useState(false);
   const readerRef = useRef(null);
+  const loadSeq = useRef(0);
 
-  const reloadArticles = useCallback(async (feedUrl, filter) => {
-    const opts = {};
-    if (feedUrl) opts.feedUrl = feedUrl;
-    if (filter && filter !== "all") opts.filter = filter;
-    const arts = await listArticles(opts);
+  const reloadArticles = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    const arts = await listArticles();
+    if (seq !== loadSeq.current) return; // stale request, ignore
     setArticles(arts);
   }, []);
 
@@ -138,9 +138,9 @@ export default function RSSReader() {
         await upsertArticles(feed.url, feed.name || result.feedTitle, result.items);
       }
     }
-    await reloadArticles(selectedFeed, viewFilter);
+    await reloadArticles();
     setRefreshing(false);
-  }, [feeds, selectedFeed, viewFilter, reloadArticles]);
+  }, [feeds, reloadArticles]);
 
   // Auto-refresh on hydration
   useEffect(() => {
@@ -159,7 +159,7 @@ export default function RSSReader() {
       await dbAddFeed(nf);
       await upsertArticles(url, result.feedTitle, result.items);
       setFeeds(await listFeeds());
-      await reloadArticles(selectedFeed, viewFilter);
+      await reloadArticles();
       setNewFeedUrl(""); setShowAddFeed(false);
     } catch (e) { console.error("addFeed error:", e); setError("Could not fetch feed. Check the URL and try again."); }
     setLoading(false);
@@ -170,7 +170,7 @@ export default function RSSReader() {
     setFeeds(await listFeeds());
     if (selectedFeed === url) setSelectedFeed(null);
     if (selectedArticle?.feedUrl === url) setSelectedArticle(null);
-    await reloadArticles(selectedFeed === url ? null : selectedFeed, viewFilter);
+    await reloadArticles();
   };
 
   const addSampleFeed = async (sample) => {
@@ -181,7 +181,7 @@ export default function RSSReader() {
       await dbAddFeed({ url: sample.url, name: sample.name || result.feedTitle, addedAt: new Date().toISOString() });
       await upsertArticles(sample.url, sample.name || result.feedTitle, result.items);
       setFeeds(await listFeeds());
-      await reloadArticles(selectedFeed, viewFilter);
+      await reloadArticles();
     } catch { setError(`Could not fetch ${sample.name}.`); }
     setLoading(false);
   };
