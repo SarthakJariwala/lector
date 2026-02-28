@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { open } from "@tauri-apps/plugin-shell";
 
 // Storage helper — uses localStorage (persists in Tauri's webview)
 const storage = {
@@ -315,9 +316,9 @@ export default function RSSReader() {
                 <button onClick={() => toggleStar(selectedArticle.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, padding: "6px 0", color: starredArticles[selectedArticle.id] ? "#d4a847" : "#888" }}>
                   {starredArticles[selectedArticle.id] ? "★ Starred" : "☆ Star"}
                 </button>
-                {selectedArticle.link && <a href={selectedArticle.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, color: "#8b5e3c", textDecoration: "none", fontFamily: "inherit" }}>Open original ↗</a>}
+                {selectedArticle.link && <a href={selectedArticle.link} onClick={(e) => { e.preventDefault(); open(selectedArticle.link); }} style={{ fontSize: 13, color: "#8b5e3c", textDecoration: "none", fontFamily: "inherit", cursor: "pointer" }}>Open original ↗</a>}
               </div>
-              <div className="article-body" dangerouslySetInnerHTML={{ __html: selectedArticle.content || "<p>No content available. Open the original article to read more.</p>" }} />
+              <div className="article-body" onClick={(e) => { const anchor = e.target.closest("a"); if (anchor?.href) { e.preventDefault(); open(anchor.href); } }} dangerouslySetInnerHTML={{ __html: selectedArticle.content || "<p>No content available. Open the original article to read more.</p>" }} />
             </article>
           </div>
         ) : (
