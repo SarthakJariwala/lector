@@ -1,18 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { open } from "@tauri-apps/plugin-shell";
-
-// Storage helper — uses localStorage (persists in Tauri's webview)
-const storage = {
-  get(key) {
-    try {
-      const v = localStorage.getItem(key);
-      return v ? JSON.parse(v) : null;
-    } catch { return null; }
-  },
-  set(key, value) {
-    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-  },
-};
+import { initDb, listFeeds, addFeed as dbAddFeed, removeFeed as dbRemoveFeed, listArticles, upsertArticles, markRead as dbMarkRead, toggleRead as dbToggleRead, toggleStar as dbToggleStar, markAllRead as dbMarkAllRead, importFromLocalStorageIfNeeded } from "./db";
 
 function parseRSS(xmlText) {
   const parser = new DOMParser();
@@ -47,7 +35,6 @@ function parseRSS(xmlText) {
 }
 
 async function fetchFeed(url) {
-  // In Tauri, direct fetch works — no CORS restrictions from desktop app
   const resp = await fetch(url, { signal: AbortSignal.timeout(12000) });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return parseRSS(await resp.text());
@@ -93,10 +80,8 @@ function useIsMobile() {
 
 export default function RSSReader() {
   const isMobile = useIsMobile();
-  const [feeds, setFeeds] = useState(() => storage.get("rss-feeds") || []);
-  const [articles, setArticles] = useState(() => storage.get("rss-articles") || []);
-  const [readArticles, setReadArticles] = useState(() => storage.get("rss-read") || {});
-  const [starredArticles, setStarredArticles] = useState(() => storage.get("rss-starred") || {});
+  const [feeds, setFeeds] = useState([]);
+  const [articles, setArticles] = useState([]);
   const [selectedFeed, setSelectedFeed] = useState(null);
   const [selectedArticle, setSelectedArticle] = useState(null);
   const [newFeedUrl, setNewFeedUrl] = useState("");
@@ -106,32 +91,52 @@ export default function RSSReader() {
   const [showAddFeed, setShowAddFeed] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
   const [viewFilter, setViewFilter] = useState("all");
+  const [hydrated, setHydrated] = useState(false);
   const readerRef = useRef(null);
 
-  // Persist on change
-  useEffect(() => { storage.set("rss-feeds", feeds); }, [feeds]);
-  useEffect(() => { storage.set("rss-read", readArticles); }, [readArticles]);
-  useEffect(() => { storage.set("rss-starred", starredArticles); }, [starredArticles]);
-  useEffect(() => { if (articles.length > 0) storage.set("rss-articles", articles.slice(0, 500)); }, [articles]);
+  const reloadArticles = useCallback(async (feedUrl, filter) => {
+    const opts = {};
+    if (feedUrl) opts.feedUrl = feedUrl;
+    if (filter && filter !== "all") opts.filter = filter;
+    const arts = await listArticles(opts);
+    setArticles(arts);
+  }, []);
+
+  // Hydrate from DB on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await initDb();
+      await importFromLocalStorageIfNeeded();
+      const dbFeeds = await listFeeds();
+      if (cancelled) return;
+      setFeeds(dbFeeds);
+      const dbArticles = await listArticles();
+      if (cancelled) return;
+      setArticles(dbArticles);
+      setHydrated(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const refreshAllFeeds = useCallback(async () => {
     if (feeds.length === 0) return;
     setRefreshing(true);
-    const allArticles = [];
     const results = await Promise.allSettled(feeds.map(async (feed) => ({ feed, result: await fetchFeed(feed.url) })));
-    results.forEach((r) => {
+    for (const r of results) {
       if (r.status === "fulfilled") {
         const { feed, result } = r.value;
-        result.items.forEach((item) => allArticles.push({ ...item, feedUrl: feed.url, feedName: feed.name || result.feedTitle, id: `${feed.url}::${item.link || item.title}` }));
+        await upsertArticles(feed.url, feed.name || result.feedTitle, result.items);
       }
-    });
-    allArticles.sort((a, b) => new Date(b.published || 0) - new Date(a.published || 0));
-    setArticles(allArticles);
+    }
+    await reloadArticles(selectedFeed, viewFilter);
     setRefreshing(false);
-  }, [feeds]);
+  }, [feeds, selectedFeed, viewFilter, reloadArticles]);
 
-  // Auto-refresh on mount
-  useEffect(() => { if (feeds.length > 0) refreshAllFeeds(); }, []);
+  // Auto-refresh on hydration
+  useEffect(() => {
+    if (hydrated && feeds.length > 0) refreshAllFeeds();
+  }, [hydrated]);
 
   const addFeed = async () => {
     if (!newFeedUrl.trim()) return;
@@ -142,19 +147,21 @@ export default function RSSReader() {
     try {
       const result = await fetchFeed(url);
       const nf = { url, name: result.feedTitle, addedAt: new Date().toISOString() };
-      setFeeds((p) => [...p, nf]);
-      const na = result.items.map((item) => ({ ...item, feedUrl: url, feedName: result.feedTitle, id: `${url}::${item.link || item.title}` }));
-      setArticles((p) => [...p, ...na].sort((a, b) => new Date(b.published || 0) - new Date(a.published || 0)));
+      await dbAddFeed(nf);
+      await upsertArticles(url, result.feedTitle, result.items);
+      setFeeds(await listFeeds());
+      await reloadArticles(selectedFeed, viewFilter);
       setNewFeedUrl(""); setShowAddFeed(false);
-    } catch { setError("Could not fetch feed. Check the URL and try again."); }
+    } catch (e) { console.error("addFeed error:", e); setError("Could not fetch feed. Check the URL and try again."); }
     setLoading(false);
   };
 
-  const removeFeed = (url) => {
-    setFeeds(feeds.filter((f) => f.url !== url));
-    setArticles(articles.filter((a) => a.feedUrl !== url));
+  const removeFeed = async (url) => {
+    await dbRemoveFeed(url);
+    setFeeds(await listFeeds());
     if (selectedFeed === url) setSelectedFeed(null);
     if (selectedArticle?.feedUrl === url) setSelectedArticle(null);
+    await reloadArticles(selectedFeed === url ? null : selectedFeed, viewFilter);
   };
 
   const addSampleFeed = async (sample) => {
@@ -162,38 +169,71 @@ export default function RSSReader() {
     setLoading(true); setError("");
     try {
       const result = await fetchFeed(sample.url);
-      setFeeds((p) => [...p, { url: sample.url, name: sample.name || result.feedTitle, addedAt: new Date().toISOString() }]);
-      const na = result.items.map((item) => ({ ...item, feedUrl: sample.url, feedName: sample.name || result.feedTitle, id: `${sample.url}::${item.link || item.title}` }));
-      setArticles((p) => [...p, ...na].sort((a, b) => new Date(b.published || 0) - new Date(a.published || 0)));
+      await dbAddFeed({ url: sample.url, name: sample.name || result.feedTitle, addedAt: new Date().toISOString() });
+      await upsertArticles(sample.url, sample.name || result.feedTitle, result.items);
+      setFeeds(await listFeeds());
+      await reloadArticles(selectedFeed, viewFilter);
     } catch { setError(`Could not fetch ${sample.name}.`); }
     setLoading(false);
   };
 
-  const markRead = (id) => setReadArticles((p) => ({ ...p, [id]: true }));
-  const toggleRead = (id) => setReadArticles((p) => { const n = { ...p }; n[id] ? delete n[id] : (n[id] = true); return n; });
-  const toggleStar = (id) => setStarredArticles((p) => { const n = { ...p }; n[id] ? delete n[id] : (n[id] = true); return n; });
-  const markAllRead = () => { const n = { ...readArticles }; getFilteredArticles().forEach((a) => (n[a.id] = true)); setReadArticles(n); };
+  const handleMarkRead = async (id) => {
+    await dbMarkRead(id);
+    setArticles((prev) => prev.map((a) => a.id === id ? { ...a, is_read: true } : a));
+  };
+
+  const handleToggleRead = async (id) => {
+    await dbToggleRead(id);
+    setArticles((prev) => prev.map((a) => a.id === id ? { ...a, is_read: !a.is_read } : a));
+  };
+
+  const handleToggleStar = async (id) => {
+    await dbToggleStar(id);
+    setArticles((prev) => prev.map((a) => a.id === id ? { ...a, is_starred: !a.is_starred } : a));
+    setSelectedArticle((prev) => prev && prev.id === id ? { ...prev, is_starred: !prev.is_starred } : prev);
+  };
+
+  const handleMarkAllRead = async () => {
+    const ids = getFilteredArticles().map((a) => a.id);
+    await dbMarkAllRead(ids);
+    setArticles((prev) => {
+      const idSet = new Set(ids);
+      return prev.map((a) => idSet.has(a.id) ? { ...a, is_read: true } : a);
+    });
+  };
 
   const openArticle = (article) => {
-    setSelectedArticle(article); markRead(article.id);
+    setSelectedArticle(article); handleMarkRead(article.id);
     if (isMobile) setSidebarOpen(false);
     setTimeout(() => { if (readerRef.current) readerRef.current.scrollTop = 0; }, 0);
   };
 
   const getFilteredArticles = () => {
     let f = selectedFeed ? articles.filter((a) => a.feedUrl === selectedFeed) : articles;
-    if (viewFilter === "unread") f = f.filter((a) => !readArticles[a.id]);
-    if (viewFilter === "starred") f = f.filter((a) => starredArticles[a.id]);
+    if (viewFilter === "unread") f = f.filter((a) => !a.is_read);
+    if (viewFilter === "starred") f = f.filter((a) => a.is_starred);
     return f;
   };
 
   const unreadCount = (feedUrl) => {
     const fa = feedUrl ? articles.filter((a) => a.feedUrl === feedUrl) : articles;
-    return fa.filter((a) => !readArticles[a.id]).length;
+    return fa.filter((a) => !a.is_read).length;
   };
 
   const selectNav = (feed, filter) => { setSelectedFeed(feed); setSelectedArticle(null); setViewFilter(filter); if (isMobile) setSidebarOpen(false); };
   const filteredArticles = getFilteredArticles();
+
+  if (!hydrated) {
+    return (
+      <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif", background: "#faf7f2", color: "#8a7e6e" }}>
+        <style>{cssText}</style>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 48, color: "#c9b99a", marginBottom: 16 }}>◈</div>
+          <p style={{ fontSize: 14 }}>Loading…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", height: "100vh", width: "100%", fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif", background: "#faf7f2", color: "#2a2520", overflow: "hidden", position: "relative" }}>
@@ -298,7 +338,7 @@ export default function RSSReader() {
             </h2>
           </div>
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-            {!selectedArticle && filteredArticles.length > 0 && !isMobile && <button onClick={markAllRead} className="topbar-btn">Mark all read</button>}
+            {!selectedArticle && filteredArticles.length > 0 && !isMobile && <button onClick={handleMarkAllRead} className="topbar-btn">Mark all read</button>}
             <button onClick={refreshAllFeeds} disabled={refreshing} className="topbar-btn" style={{ opacity: refreshing ? 0.5 : 1 }}>{refreshing ? "…" : "↻"}</button>
           </div>
         </div>
@@ -313,8 +353,8 @@ export default function RSSReader() {
               </div>
               <h1 style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: isMobile ? 24 : 32, fontWeight: 500, lineHeight: 1.25, color: "#1a1510", marginBottom: 14, letterSpacing: "-0.015em" }}>{selectedArticle.title}</h1>
               <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24, paddingBottom: 18, borderBottom: "1px solid #e8e0d4", flexWrap: "wrap" }}>
-                <button onClick={() => toggleStar(selectedArticle.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, padding: "6px 0", color: starredArticles[selectedArticle.id] ? "#d4a847" : "#888" }}>
-                  {starredArticles[selectedArticle.id] ? "★ Starred" : "☆ Star"}
+                <button onClick={() => handleToggleStar(selectedArticle.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, padding: "6px 0", color: selectedArticle.is_starred ? "#d4a847" : "#888" }}>
+                  {selectedArticle.is_starred ? "★ Starred" : "☆ Star"}
                 </button>
                 {selectedArticle.link && <a href={selectedArticle.link} onClick={(e) => { e.preventDefault(); open(selectedArticle.link); }} style={{ fontSize: 13, color: "#8b5e3c", textDecoration: "none", fontFamily: "inherit", cursor: "pointer" }}>Open original ↗</a>}
               </div>
@@ -342,26 +382,26 @@ export default function RSSReader() {
               </div>
             ) : (
               filteredArticles.map((article) => (
-                <button key={article.id} onClick={() => openArticle(article)} className="article-card" style={{ background: readArticles[article.id] ? "#faf7f2" : "#fff", borderColor: readArticles[article.id] ? "#ede6db" : "#e8e0d4" }}>
+                <button key={article.id} onClick={() => openArticle(article)} className="article-card" style={{ background: article.is_read ? "#faf7f2" : "#fff", borderColor: article.is_read ? "#ede6db" : "#e8e0d4" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
                     <span className="feed-tag">{article.feedName}</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                       <span style={{ fontSize: 11, color: "#b0a690" }}>{formatDate(article.published)}</span>
                       <span
                         role="button"
-                        title={readArticles[article.id] ? "Mark as unread" : "Mark as read"}
-                        className={`read-toggle-btn${readArticles[article.id] ? "" : " unread"}`}
-                        onClick={(e) => { e.stopPropagation(); toggleRead(article.id); }}
+                        title={article.is_read ? "Mark as unread" : "Mark as read"}
+                        className={`read-toggle-btn${article.is_read ? "" : " unread"}`}
+                        onClick={(e) => { e.stopPropagation(); handleToggleRead(article.id); }}
                         style={{ fontSize: 10, color: "#8b5e3c", cursor: "pointer", padding: "2px 4px", borderRadius: 4, lineHeight: 1 }}
                       >
-                        {readArticles[article.id] ? "○" : "●"}
+                        {article.is_read ? "○" : "●"}
                       </span>
                     </div>
                   </div>
                   <h3 style={{
                     fontFamily: "'Newsreader', Georgia, serif", fontSize: isMobile ? 15 : 17,
-                    fontWeight: readArticles[article.id] ? 400 : 500, lineHeight: 1.35,
-                    color: readArticles[article.id] ? "#6a6050" : "#1a1510", marginBottom: 5,
+                    fontWeight: article.is_read ? 400 : 500, lineHeight: 1.35,
+                    color: article.is_read ? "#6a6050" : "#1a1510", marginBottom: 5,
                   }}>
                     {article.title}
                   </h3>
@@ -372,7 +412,7 @@ export default function RSSReader() {
                   )}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
                     {article.author && <span style={{ fontSize: 11, color: "#b0a690" }}>{article.author}</span>}
-                    {starredArticles[article.id] && <span style={{ color: "#d4a847", fontSize: 13 }}>★</span>}
+                    {article.is_starred && <span style={{ color: "#d4a847", fontSize: 13 }}>★</span>}
                   </div>
                 </button>
               ))
