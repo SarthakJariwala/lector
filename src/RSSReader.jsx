@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { open } from "@tauri-apps/plugin-shell";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { initDb, listFeeds, addFeed as dbAddFeed, removeFeed as dbRemoveFeed, listArticles, upsertArticles, markRead as dbMarkRead, toggleRead as dbToggleRead, toggleStar as dbToggleStar, markAllRead as dbMarkAllRead, importFromLocalStorageIfNeeded } from "./db";
 
 function parseRSS(xmlText) {
@@ -27,15 +28,23 @@ function parseRSS(xmlText) {
       title: item.querySelector("title")?.textContent || "Untitled",
       link: item.querySelector("link")?.textContent || "",
       published: item.querySelector("pubDate")?.textContent || item.querySelector("dc\\:date")?.textContent || "",
-      content: item.querySelector("content\\:encoded")?.textContent || item.querySelector("description")?.textContent || "",
-      author: item.querySelector("dc\\:creator")?.textContent || item.querySelector("author")?.textContent || "",
+      content: item.getElementsByTagName("content:encoded")[0]?.textContent || item.querySelector("description")?.textContent || "",
+      author: item.getElementsByTagName("dc:creator")[0]?.textContent || item.querySelector("author")?.textContent || "",
     });
   });
   return { feedTitle, items };
 }
 
 async function fetchFeed(url) {
-  const resp = await fetch(url, { signal: AbortSignal.timeout(12000) });
+  const resp = await tauriFetch(url, {
+    method: "GET",
+    headers: {
+      "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+      "User-Agent": "Lector/1.0",
+    },
+    connectTimeout: 12000,
+    maxRedirections: 10,
+  });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return parseRSS(await resp.text());
 }
