@@ -69,6 +69,28 @@ function stripHtml(html) {
   return tmp.textContent || tmp.innerText || "";
 }
 
+function processArticleContent(html) {
+  if (!html) return html;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("textarea").forEach((textarea) => {
+    const wrapper = doc.createElement("div");
+    wrapper.className = "embed-block";
+    const lang = textarea.getAttribute("data-language") || textarea.className.replace(/^language-/, "").replace(/^lang-/, "") || "";
+    if (lang) {
+      const label = doc.createElement("span");
+      label.className = "embed-block-label";
+      label.textContent = lang.toUpperCase();
+      wrapper.appendChild(label);
+    }
+    const content = doc.createElement("div");
+    content.className = "embed-block-content";
+    content.innerHTML = textarea.value || textarea.textContent;
+    wrapper.appendChild(content);
+    textarea.replaceWith(wrapper);
+  });
+  return doc.body.innerHTML;
+}
+
 const SAMPLE_FEEDS = [
   { url: "https://hnrss.org/frontpage", name: "Hacker News" },
   { url: "https://feeds.arstechnica.com/arstechnica/index", name: "Ars Technica" },
@@ -367,7 +389,7 @@ export default function RSSReader() {
                 </button>
                 {selectedArticle.link && <a href={selectedArticle.link} onClick={(e) => { e.preventDefault(); open(selectedArticle.link); }} style={{ fontSize: 13, color: "#8b5e3c", textDecoration: "none", fontFamily: "inherit", cursor: "pointer" }}>Open original ↗</a>}
               </div>
-              <div className="article-body" onClick={(e) => { const anchor = e.target.closest("a"); if (anchor?.href) { e.preventDefault(); open(anchor.href); } }} dangerouslySetInnerHTML={{ __html: selectedArticle.content || "<p>No content available. Open the original article to read more.</p>" }} />
+              <div className="article-body" onClick={(e) => { const anchor = e.target.closest("a"); if (anchor?.href) { e.preventDefault(); open(anchor.href); } }} dangerouslySetInnerHTML={{ __html: processArticleContent(selectedArticle.content) || "<p>No content available. Open the original article to read more.</p>" }} />
             </article>
           </div>
         ) : (
@@ -481,8 +503,14 @@ const cssText = `
   .article-body img { max-width: 100%; height: auto; border-radius: 6px; margin: 1em 0; }
   .article-body h1, .article-body h2, .article-body h3 { font-family: 'Newsreader', Georgia, serif; margin: 1.4em 0 0.5em; color: #1a1510; }
   .article-body blockquote { border-left: 3px solid #c9b99a; padding-left: 1.2em; margin: 1.2em 0; color: #5a5040; font-style: italic; }
-  .article-body pre { background: #f5f0e8; padding: 1em; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 1em 0; white-space: pre-wrap; word-break: break-all; }
-  .article-body code { background: #f5f0e8; padding: 2px 5px; border-radius: 3px; font-size: 0.88em; }
+  .article-body pre { background: #f5f0e8; padding: 1em; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 1em 0; white-space: pre-wrap; word-break: break-all; border: 1px solid #e8e0d4; }
+  .article-body pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; }
+  .article-body code { background: #f0ebe3; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
+
+  .article-body .embed-block { position: relative; background: #faf8f4; border: 1px solid #e0dbd3; border-radius: 10px; padding: 24px 28px; margin: 1.2em 0; }
+  .article-body .embed-block-label { position: absolute; top: 12px; right: 14px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; color: #8a7e9a; background: #f0edf5; border: 1px solid #ddd8e8; border-radius: 5px; padding: 2px 8px; font-family: 'DM Sans', -apple-system, sans-serif; }
+  .article-body .embed-block-content { font-family: 'Newsreader', Georgia, serif; font-size: 16px; line-height: 1.65; color: #2a2520; }
+  .article-body .embed-block-content code { background: #ece7df; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
   .article-body ul, .article-body ol { padding-left: 1.5em; margin-bottom: 1.2em; }
   .article-body li { margin-bottom: 0.4em; }
 
