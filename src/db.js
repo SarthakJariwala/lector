@@ -34,6 +34,13 @@ export async function removeFeed(url) {
   );
 }
 
+export async function renameFeed(url, newName) {
+  return withWriteLock(async () => {
+    await db.execute("UPDATE feeds SET name = $1 WHERE url = $2", [newName, url]);
+    await db.execute("UPDATE articles SET feed_name = $1 WHERE feed_url = $2", [newName, url]);
+  });
+}
+
 export async function listArticles({ feedUrl, filter } = {}) {
   let sql = "SELECT id, feed_url, feed_name, title, link, published, published_ts, content, author, is_read, is_starred, fetched_at FROM articles";
   const conditions = [];

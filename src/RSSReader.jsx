@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { initDb, listFeeds, addFeed as dbAddFeed, removeFeed as dbRemoveFeed, listArticles, upsertArticles, markRead as dbMarkRead, toggleRead as dbToggleRead, toggleStar as dbToggleStar, markAllRead as dbMarkAllRead, importFromLocalStorageIfNeeded } from "./db";
+import { initDb, listFeeds, addFeed as dbAddFeed, removeFeed as dbRemoveFeed, renameFeed as dbRenameFeed, listArticles, upsertArticles, markRead as dbMarkRead, toggleRead as dbToggleRead, toggleStar as dbToggleStar, markAllRead as dbMarkAllRead, importFromLocalStorageIfNeeded } from "./db";
 
 function parseRSS(xmlText) {
   const parser = new DOMParser();
@@ -120,6 +120,8 @@ export default function RSSReader() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [showAddFeed, setShowAddFeed] = useState(false);
+  const [editingFeed, setEditingFeed] = useState(null);
+  const [editingName, setEditingName] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
   const [viewFilter, setViewFilter] = useState("all");
   const [hydrated, setHydrated] = useState(false);
@@ -193,6 +195,16 @@ export default function RSSReader() {
     if (selectedFeed === url) setSelectedFeed(null);
     if (selectedArticle?.feedUrl === url) setSelectedArticle(null);
     await reloadArticles();
+  };
+
+  const handleRenameFeed = async (url, newName) => {
+    const trimmed = newName.trim();
+    if (!trimmed) { setEditingFeed(null); return; }
+    await dbRenameFeed(url, trimmed);
+    setFeeds(await listFeeds());
+    setArticles((prev) => prev.map((a) => a.feedUrl === url ? { ...a, feedName: trimmed } : a));
+    if (selectedArticle?.feedUrl === url) setSelectedArticle((prev) => prev ? { ...prev, feedName: trimmed } : prev);
+    setEditingFeed(null);
   };
 
   const addSampleFeed = async (sample) => {
@@ -339,11 +351,25 @@ export default function RSSReader() {
           <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             {feeds.map((feed) => (
               <div key={feed.url} className="feed-item" style={{ display: "flex", alignItems: "center", borderRadius: 8, background: selectedFeed === feed.url ? "#e8e0d4" : "transparent" }}>
-                <button onClick={() => selectNav(selectedFeed === feed.url ? null : feed.url, "unread")} style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", border: "none", background: "none", cursor: "pointer", fontSize: 14, fontFamily: "inherit", color: "#2a2520", textAlign: "left", borderRadius: 8, overflow: "hidden", minWidth: 0 }}>
-                  <span style={{ fontSize: 8, color: "#8b5e3c", flexShrink: 0 }}>●</span>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{feed.name}</span>
-                  {unreadCount(feed.url) > 0 && <span className="badge">{unreadCount(feed.url)}</span>}
-                </button>
+                {editingFeed === feed.url ? (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "4px 12px" }}>
+                    <span style={{ fontSize: 8, color: "#8b5e3c", flexShrink: 0 }}>●</span>
+                    <input
+                      autoFocus
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleRenameFeed(feed.url, editingName); if (e.key === "Escape") setEditingFeed(null); }}
+                      onBlur={() => handleRenameFeed(feed.url, editingName)}
+                      style={{ flex: 1, border: "1px solid #c9b99a", borderRadius: 6, padding: "5px 8px", fontSize: 14, fontFamily: "inherit", background: "#faf7f2", color: "#2a2520", outline: "none", minWidth: 0 }}
+                    />
+                  </div>
+                ) : (
+                  <button onClick={() => selectNav(selectedFeed === feed.url ? null : feed.url, "unread")} onDoubleClick={(e) => { e.stopPropagation(); setEditingFeed(feed.url); setEditingName(feed.name); }} style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", border: "none", background: "none", cursor: "pointer", fontSize: 14, fontFamily: "inherit", color: "#2a2520", textAlign: "left", borderRadius: 8, overflow: "hidden", minWidth: 0 }}>
+                    <span style={{ fontSize: 8, color: "#8b5e3c", flexShrink: 0 }}>●</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{feed.name}</span>
+                    {unreadCount(feed.url) > 0 && <span className="badge">{unreadCount(feed.url)}</span>}
+                  </button>
+                )}
                 <button onClick={(e) => { e.stopPropagation(); removeFeed(feed.url); }} className="remove-btn" title="Unsubscribe">×</button>
               </div>
             ))}
