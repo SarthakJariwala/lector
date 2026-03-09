@@ -339,7 +339,7 @@ export default function RSSReader() {
           <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             {feeds.map((feed) => (
               <div key={feed.url} className="feed-item" style={{ display: "flex", alignItems: "center", borderRadius: 8, background: selectedFeed === feed.url ? "#e8e0d4" : "transparent" }}>
-                <button onClick={() => selectNav(selectedFeed === feed.url ? null : feed.url, "all")} style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", border: "none", background: "none", cursor: "pointer", fontSize: 14, fontFamily: "inherit", color: "#2a2520", textAlign: "left", borderRadius: 8, overflow: "hidden", minWidth: 0 }}>
+                <button onClick={() => selectNav(selectedFeed === feed.url ? null : feed.url, "unread")} style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", border: "none", background: "none", cursor: "pointer", fontSize: 14, fontFamily: "inherit", color: "#2a2520", textAlign: "left", borderRadius: 8, overflow: "hidden", minWidth: 0 }}>
                   <span style={{ fontSize: 8, color: "#8b5e3c", flexShrink: 0 }}>●</span>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{feed.name}</span>
                   {unreadCount(feed.url) > 0 && <span className="badge">{unreadCount(feed.url)}</span>}
@@ -368,7 +368,22 @@ export default function RSSReader() {
               {selectedArticle ? selectedArticle.feedName : selectedFeed ? feeds.find((f) => f.url === selectedFeed)?.name : viewFilter === "unread" ? "Unread" : viewFilter === "starred" ? "Starred" : "All Articles"}
             </h2>
           </div>
-          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+            {!selectedArticle && selectedFeed && (
+              <div style={{ display: "flex", background: "#e8e0d4", borderRadius: 6, padding: 2, gap: 1 }}>
+                {["all", "unread"].map((f) => (
+                  <button key={f} onClick={() => setViewFilter(f)} style={{
+                    border: "none", background: viewFilter === f ? "#faf7f2" : "transparent",
+                    borderRadius: 5, padding: "4px 10px", fontSize: 12, fontFamily: "inherit",
+                    color: viewFilter === f ? "#2a2520" : "#8a7e6e", fontWeight: viewFilter === f ? 500 : 400,
+                    cursor: "pointer", transition: "all 0.15s ease",
+                    boxShadow: viewFilter === f ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                  }}>
+                    {f === "all" ? "All" : `Unread${unreadCount(selectedFeed) > 0 ? ` (${unreadCount(selectedFeed)})` : ""}`}
+                  </button>
+                ))}
+              </div>
+            )}
             {!selectedArticle && filteredArticles.length > 0 && !isMobile && <button onClick={handleMarkAllRead} className="topbar-btn">Mark all read</button>}
             <button onClick={refreshAllFeeds} disabled={refreshing} className="topbar-btn" style={{ opacity: refreshing ? 0.5 : 1 }}>{refreshing ? "…" : "↻"}</button>
           </div>
