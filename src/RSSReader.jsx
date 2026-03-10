@@ -541,7 +541,10 @@ const cssText = `
   .article-body { font-family: 'Newsreader', Georgia, serif; font-size: 17px; line-height: 1.75; color: #2a2520; word-wrap: break-word; overflow-wrap: break-word; }
   .article-body p { margin-bottom: 1.2em; }
   .article-body a { color: #8b5e3c; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
-  .article-body img { max-width: 100%; height: auto; border-radius: 6px; margin: 1em 0; }
+  .article-body img { max-width: 100%; height: auto; display: block; margin: 1em auto; }
+  .article-body figure { margin: 1.5em 0; text-align: center; }
+  .article-body figure img { margin: 0 auto; }
+  .article-body figcaption { font-size: 14px; color: #8a7e6e; margin-top: 8px; text-align: center; font-style: italic; }
   .article-body h1, .article-body h2, .article-body h3 { font-family: 'Newsreader', Georgia, serif; margin: 1.4em 0 0.5em; color: #1a1510; }
   .article-body blockquote { border-left: 3px solid #c9b99a; padding-left: 1.2em; margin: 1.2em 0; color: #5a5040; font-style: italic; }
   .article-body pre { background: #f5f0e8; padding: 1em; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 1em 0; white-space: pre-wrap; word-break: break-all; border: 1px solid #e8e0d4; }
