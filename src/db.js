@@ -9,12 +9,22 @@ const SYNC_DEVICE_ID_META_KEY = "sync_device_id";
 const SYNC_NEXT_MUTATION_ID_META_KEY = "sync_next_mutation_id";
 const SYNC_LAST_CURSOR_META_KEY = "sync_last_pulled_cursor";
 const SYNC_LOGICAL_CLOCK_META_KEY = "sync_logical_clock_ms";
+const SYNC_ENDPOINT_META_KEY = "sync_endpoint";
+const SYNC_TOKEN_META_KEY = "sync_token";
 
 const BACKFILL_ACTOR = "migration";
-const SYNC_ENDPOINT = (import.meta.env.VITE_SYNC_ENDPOINT || "").trim();
-const SYNC_TOKEN = (import.meta.env.VITE_SYNC_TOKEN || "").trim();
+const DEV_SYNC_ENDPOINT = import.meta.env.DEV
+  ? (import.meta.env.VITE_SYNC_ENDPOINT || "").trim()
+  : "";
+const DEV_SYNC_TOKEN = import.meta.env.DEV
+  ? (import.meta.env.VITE_SYNC_TOKEN || "").trim()
+  : "";
 const MAX_SYNC_MUTATIONS = 200;
 const MAX_SYNC_CHANGES = 500;
+let runtimeSyncConfig = {
+  endpoint: "",
+  token: "",
+};
 
 // Simple mutex to serialize all write operations
 let writeLock = Promise.resolve();
@@ -27,7 +37,40 @@ function withWriteLock(fn) {
 }
 
 export function isSyncConfigured() {
-  return !!SYNC_ENDPOINT && !!SYNC_TOKEN;
+  return !!runtimeSyncConfig.endpoint && !!runtimeSyncConfig.token;
+}
+
+export async function getSyncConfig() {
+  if (!db) await initDb();
+  return { ...runtimeSyncConfig };
+}
+
+export async function setSyncConfig({ endpoint, token }) {
+  if (!db) await initDb();
+
+  const normalizedEndpoint = normalizeEndpoint(endpoint);
+  const normalizedToken = (token || "").trim();
+
+  await withWriteLock(async () => {
+    if (normalizedEndpoint) {
+      await setMetaValue(SYNC_ENDPOINT_META_KEY, normalizedEndpoint);
+    } else {
+      await deleteMetaValue(SYNC_ENDPOINT_META_KEY);
+    }
+
+    if (normalizedToken) {
+      await setMetaValue(SYNC_TOKEN_META_KEY, normalizedToken);
+    } else {
+      await deleteMetaValue(SYNC_TOKEN_META_KEY);
+    }
+  });
+
+  runtimeSyncConfig = {
+    endpoint: normalizedEndpoint,
+    token: normalizedToken,
+  };
+
+  return { ...runtimeSyncConfig };
 }
 
 export async function initDb() {
@@ -35,6 +78,7 @@ export async function initDb() {
   db = await Database.load("sqlite:lector.db");
   await backfillArticleStateIfNeeded();
   await ensureSyncMetaDefaults();
+  await loadRuntimeSyncConfig();
   return db;
 }
 
@@ -310,11 +354,12 @@ export async function syncStateWithServer({
   maxMutations = MAX_SYNC_MUTATIONS,
   maxChanges = MAX_SYNC_CHANGES,
 } = {}) {
-  if (!isSyncConfigured()) {
+  await initDb();
+
+  const syncConfig = await getSyncConfig();
+  if (!syncConfig.endpoint || !syncConfig.token) {
     return { skipped: true, reason: "not_configured" };
   }
-
-  await initDb();
 
   const deviceId = await getOrCreateDeviceId();
   const lastCursor = toInt(await getMetaValue(SYNC_LAST_CURSOR_META_KEY), 0);
@@ -337,11 +382,11 @@ export async function syncStateWithServer({
     return { mutationId: row.mutation_id, type: row.type, ...payload };
   });
 
-  const resp = await tauriFetch(SYNC_ENDPOINT, {
+  const resp = await tauriFetch(syncConfig.endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${SYNC_TOKEN}`,
+      "Authorization": `Bearer ${syncConfig.token}`,
     },
     body: JSON.stringify({
       deviceId,
@@ -788,6 +833,15 @@ async function nextLogicalTimestamp() {
   return next;
 }
 
+async function loadRuntimeSyncConfig() {
+  const storedEndpoint = (await getMetaValue(SYNC_ENDPOINT_META_KEY) || "").trim();
+  const storedToken = (await getMetaValue(SYNC_TOKEN_META_KEY) || "").trim();
+  runtimeSyncConfig = {
+    endpoint: normalizeEndpoint(storedEndpoint || DEV_SYNC_ENDPOINT),
+    token: storedToken || DEV_SYNC_TOKEN,
+  };
+}
+
 async function getMetaValue(key) {
   const rows = await db.select("SELECT value FROM meta WHERE key = $1", [key]);
   return rows.length > 0 ? rows[0].value : null;
@@ -795,6 +849,10 @@ async function getMetaValue(key) {
 
 async function setMetaValue(key, value) {
   await db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ($1, $2)", [key, String(value)]);
+}
+
+async function deleteMetaValue(key) {
+  await db.execute("DELETE FROM meta WHERE key = $1", [key]);
 }
 
 async function ensureMetaValue(key, defaultValue) {
@@ -813,6 +871,11 @@ function isIncomingNewer(incomingAt, incomingBy, currentAt, currentBy) {
 function toInt(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+}
+
+function normalizeEndpoint(endpoint) {
+  const trimmed = (endpoint || "").trim();
+  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
 }
 
 function getLocalStorage(key) {

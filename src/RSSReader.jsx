@@ -15,7 +15,8 @@ import {
   markAllRead as dbMarkAllRead,
   importFromLocalStorageIfNeeded,
   syncStateWithServer,
-  isSyncConfigured,
+  getSyncConfig,
+  setSyncConfig,
 } from "./db";
 
 function parseRSS(xmlText) {
@@ -172,6 +173,12 @@ export default function RSSReader() {
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
   const [viewFilter, setViewFilter] = useState("all");
   const [hydrated, setHydrated] = useState(false);
+  const [syncConfigured, setSyncConfigured] = useState(false);
+  const [showSyncConfig, setShowSyncConfig] = useState(false);
+  const [syncEndpointInput, setSyncEndpointInput] = useState("");
+  const [syncTokenInput, setSyncTokenInput] = useState("");
+  const [syncConfigError, setSyncConfigError] = useState("");
+  const [syncSaving, setSyncSaving] = useState(false);
   const readerRef = useRef(null);
   const loadSeq = useRef(0);
   const syncInFlight = useRef(false);
@@ -184,7 +191,7 @@ export default function RSSReader() {
   }, []);
 
   const runSync = useCallback(async () => {
-    if (!isSyncConfigured() || syncInFlight.current) return;
+    if (!syncConfigured || syncInFlight.current) return;
     syncInFlight.current = true;
     try {
       const result = await syncStateWithServer();
@@ -197,7 +204,62 @@ export default function RSSReader() {
     } finally {
       syncInFlight.current = false;
     }
-  }, [reloadArticles]);
+  }, [reloadArticles, syncConfigured]);
+
+  const openSyncConfigDialog = useCallback(async () => {
+    const cfg = await getSyncConfig();
+    setSyncEndpointInput(cfg.endpoint || "");
+    setSyncTokenInput(cfg.token || "");
+    setSyncConfigError("");
+    setShowSyncConfig(true);
+  }, []);
+
+  const handleSaveSyncConfig = async () => {
+    setSyncSaving(true);
+    setSyncConfigError("");
+    const endpoint = syncEndpointInput.trim();
+    const token = syncTokenInput.trim();
+    if ((endpoint && !token) || (!endpoint && token)) {
+      setSyncConfigError("Enter both endpoint and token, or use Disable Sync.");
+      setSyncSaving(false);
+      return;
+    }
+
+    try {
+      const cfg = await setSyncConfig({
+        endpoint,
+        token,
+      });
+      const configured = !!cfg.endpoint && !!cfg.token;
+      setSyncConfigured(configured);
+      if (configured) {
+        await runSync();
+      }
+      setShowSyncConfig(false);
+    } catch (e) {
+      console.error("save sync config error:", e);
+      setSyncConfigError("Could not save sync settings.");
+    } finally {
+      setSyncSaving(false);
+    }
+  };
+
+  const handleDisableSync = async () => {
+    setSyncSaving(true);
+    setSyncConfigError("");
+    try {
+      await setSyncConfig({ endpoint: "", token: "" });
+      setSyncConfigured(false);
+      setSyncEndpointInput("");
+      setSyncTokenInput("");
+      setShowSyncConfig(false);
+    } catch (e) {
+      console.error("disable sync error:", e);
+      setSyncConfigError("Could not disable sync.");
+    } finally {
+      setSyncSaving(false);
+    }
+  };
 
   // Hydrate from DB on mount
   useEffect(() => {
@@ -205,8 +267,12 @@ export default function RSSReader() {
     (async () => {
       await initDb();
       await importFromLocalStorageIfNeeded();
+      const syncCfg = await getSyncConfig();
       const dbFeeds = await listFeeds();
       if (cancelled) return;
+      setSyncConfigured(!!syncCfg.endpoint && !!syncCfg.token);
+      setSyncEndpointInput(syncCfg.endpoint || "");
+      setSyncTokenInput(syncCfg.token || "");
       setFeeds(dbFeeds);
       const dbArticles = await listArticles();
       if (cancelled) return;
@@ -244,7 +310,7 @@ export default function RSSReader() {
   }, [hydrated, feeds.length]);
 
   useEffect(() => {
-    if (!hydrated || !isSyncConfigured()) return;
+    if (!hydrated || !syncConfigured) return;
     const tick = () => {
       void runSync();
     };
@@ -265,7 +331,7 @@ export default function RSSReader() {
       window.removeEventListener("online", onOnline);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [hydrated, runSync]);
+  }, [hydrated, runSync, syncConfigured]);
 
   const addFeed = async () => {
     if (!newFeedUrl.trim()) return;
@@ -473,6 +539,128 @@ export default function RSSReader() {
             WebkitBackdropFilter: "blur(2px)",
           }}
         />
+      )}
+
+      {showSyncConfig && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(30,25,18,0.45)",
+            zIndex: 130,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              width: "min(520px, 100%)",
+              background: "#faf7f2",
+              border: "1px solid #ddd5c8",
+              borderRadius: 12,
+              boxShadow: "0 12px 32px rgba(0,0,0,0.22)",
+              padding: isMobile ? "16px" : "18px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <h3
+                  style={{
+                    fontFamily: "'Newsreader', Georgia, serif",
+                    fontSize: 24,
+                    fontWeight: 500,
+                    color: "#2a2520",
+                    marginBottom: 2,
+                  }}
+                >
+                  Sync Settings
+                </h3>
+                <p style={{ fontSize: 13, color: "#6a6050" }}>
+                  Enter your Worker endpoint and token for this computer.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowSyncConfig(false)}
+                style={{
+                  border: "none",
+                  background: "none",
+                  color: "#8a7e6e",
+                  fontSize: 22,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                  padding: "2px 4px",
+                  height: 28,
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#5a5040" }}>
+                Sync endpoint
+              </label>
+              <input
+                type="url"
+                value={syncEndpointInput}
+                onChange={(e) => setSyncEndpointInput(e.target.value)}
+                placeholder="https://lector-sync.your-subdomain.workers.dev/v1/sync"
+                className="feed-input"
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#5a5040" }}>
+                Sync token
+              </label>
+              <input
+                type="password"
+                value={syncTokenInput}
+                onChange={(e) => setSyncTokenInput(e.target.value)}
+                placeholder="Paste your SYNC_TOKEN"
+                className="feed-input"
+                autoComplete="off"
+              />
+            </div>
+
+            {syncConfigError && (
+              <div style={{ color: "#b54a30", fontSize: 12 }}>{syncConfigError}</div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={handleDisableSync}
+                className="ghost-btn"
+                disabled={syncSaving}
+                style={{ color: "#b54a30", border: "1px solid #e6c6bd", borderRadius: 8 }}
+              >
+                Disable Sync
+              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => setShowSyncConfig(false)}
+                  className="ghost-btn"
+                  disabled={syncSaving}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveSyncConfig}
+                  className="primary-btn"
+                  disabled={syncSaving}
+                  style={{ opacity: syncSaving ? 0.6 : 1 }}
+                >
+                  {syncSaving ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Sidebar */}
@@ -980,6 +1168,9 @@ export default function RSSReader() {
                 Mark all read
               </button>
             )}
+            <button onClick={() => void openSyncConfigDialog()} className="topbar-btn">
+              {syncConfigured ? "Sync Settings" : "Setup Sync"}
+            </button>
             <button
               onClick={refreshAllFeeds}
               disabled={refreshing}

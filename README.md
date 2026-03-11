@@ -55,7 +55,14 @@ because there are no CORS restrictions.
 
 ## Optional Cloud Sync
 
-Set these environment variables to enable sync in the desktop app:
+Configure sync inside the app via **Sync Settings** (top-right action in the main view):
+
+- Paste your Worker endpoint (for example `https://<subdomain>.workers.dev/v1/sync`)
+- Paste your `SYNC_TOKEN`
+
+You can rotate/update token values anytime from that same dialog.
+
+For development only, you can still provide default values via env:
 
 - `VITE_SYNC_ENDPOINT`
 - `VITE_SYNC_TOKEN`
