@@ -693,12 +693,13 @@ export default function RSSReader() {
       >
         <div
           style={{
-            padding: "18px 18px 14px",
+            padding: "0 18px",
             borderBottom: "1px solid #ddd5c8",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             flexShrink: 0,
+            height: 56,
           }}
         >
           <h1
@@ -1063,11 +1064,11 @@ export default function RSSReader() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: isMobile ? "10px 12px" : "12px 20px",
+            padding: isMobile ? "0 12px" : "0 20px",
             borderBottom: "1px solid #e8e0d4",
             background: "#faf7f2",
             flexShrink: 0,
-            minHeight: 50,
+            height: 56,
             gap: 6,
           }}
         >
@@ -1104,6 +1105,8 @@ export default function RSSReader() {
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                lineHeight: 1,
+                transform: "translateY(1px)",
               }}
             >
               {selectedArticle
@@ -1519,10 +1522,10 @@ const cssText = `
   .feed-item:hover .remove-btn { opacity: 1; }
   .remove-btn { background: none; border: none; cursor: pointer; font-size: 18px; color: #b0a690; padding: 4px 10px 4px 4px; font-family: inherit; opacity: 0; transition: opacity 0.15s; }
 
-  .icon-btn { background: none; border: none; cursor: pointer; font-size: 16px; color: #8a7e6e; padding: 6px 8px; border-radius: 6px; font-family: inherit; transition: background 0.12s; }
+  .icon-btn { background: none; border: none; cursor: pointer; font-size: 16px; color: #8a7e6e; padding: 6px 8px; border-radius: 6px; font-family: inherit; transition: background 0.12s; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
   .icon-btn:hover { background: #f0ebe3; }
 
-  .back-btn { background: none; border: none; cursor: pointer; font-size: 14px; color: #8b5e3c; padding: 6px 8px; font-family: inherit; flex-shrink: 0; }
+  .back-btn { background: none; border: none; cursor: pointer; font-size: 14px; color: #8b5e3c; padding: 6px 8px; font-family: inherit; flex-shrink: 0; display: inline-flex; align-items: center; line-height: 1; }
 
   .topbar-btn { background: none; border: 1px solid #ddd5c8; cursor: pointer; font-size: 12px; color: #5a5040; padding: 5px 12px; border-radius: 6px; font-family: inherit; white-space: nowrap; transition: background 0.12s; }
   .topbar-btn:hover { background: #f0ebe3; }
