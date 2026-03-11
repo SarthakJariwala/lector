@@ -36,6 +36,39 @@ pub fn run() {
             );",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 2,
+            description: "add_sync_foundation_tables",
+            sql: "ALTER TABLE feeds ADD COLUMN subscribed INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE feeds ADD COLUMN subscription_changed_at INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE feeds ADD COLUMN subscription_changed_by TEXT NOT NULL DEFAULT '';
+            ALTER TABLE feeds ADD COLUMN name_changed_at INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE feeds ADD COLUMN name_changed_by TEXT NOT NULL DEFAULT '';
+
+            CREATE TABLE IF NOT EXISTS article_state (
+                article_id TEXT PRIMARY KEY,
+                feed_url TEXT NOT NULL,
+                read_value INTEGER NOT NULL DEFAULT 0,
+                read_changed_at INTEGER NOT NULL DEFAULT 0,
+                read_changed_by TEXT NOT NULL DEFAULT '',
+                starred_value INTEGER NOT NULL DEFAULT 0,
+                starred_changed_at INTEGER NOT NULL DEFAULT 0,
+                starred_changed_by TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_article_state_feed_url ON article_state(feed_url);
+
+            CREATE TABLE IF NOT EXISTS sync_outbox (
+                device_id TEXT NOT NULL,
+                mutation_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (device_id, mutation_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_sync_outbox_created_at ON sync_outbox(created_at);",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

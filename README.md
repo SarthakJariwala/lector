@@ -49,9 +49,18 @@ because there are no CORS restrictions.
 - Read articles inline with a clean serif reading view
 - Mark read/unread, star favorites
 - Filter: All, Unread, Starred
-- Data persists in localStorage across sessions
+- Data persists in local SQLite across sessions
 - Mobile-responsive layout
 - Quick-add popular feeds (HN, Ars Technica, The Verge, BBC News)
+
+## Optional Cloud Sync
+
+Set these environment variables to enable sync in the desktop app:
+
+- `VITE_SYNC_ENDPOINT`
+- `VITE_SYNC_TOKEN`
+
+The reference Cloudflare Worker + D1 setup lives in `sync-worker/`.
 
 ## Project Structure
 

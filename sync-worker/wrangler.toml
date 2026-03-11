@@ -1,0 +1,8 @@
+name = "lector-sync"
+main = "src/index.js"
+compatibility_date = "2026-03-11"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lector-sync"
+database_id = "d5039a0e-ad88-4bcc-b3bc-29d207d3ab37"
