@@ -501,7 +501,6 @@ export default function RSSReader() {
           color: "#8a7e6e",
         }}
       >
-        <style>{cssText}</style>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 48, color: "#c9b99a", marginBottom: 16 }}>
             ◈
@@ -525,8 +524,6 @@ export default function RSSReader() {
         position: "relative",
       }}
     >
-      <style>{cssText}</style>
-
       {isMobile && sidebarOpen && (
         <div
           onClick={() => setSidebarOpen(false)}
@@ -1496,72 +1493,3 @@ export default function RSSReader() {
     </div>
   );
 }
-
-const cssText = `
-  @import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&display=swap');
-  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-
-  .badge { margin-left: auto; background: #8b5e3c; color: #faf7f2; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; min-width: 20px; text-align: center; flex-shrink: 0; }
-  .feed-tag { font-size: 11px; font-weight: 600; color: #8b5e3c; text-transform: uppercase; letter-spacing: 0.04em; }
-
-  .primary-btn { padding: 9px 16px; background: #8b5e3c; color: #faf7f2; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; transition: filter 0.15s; }
-  .primary-btn:hover { filter: brightness(1.08); }
-  .primary-btn:active { filter: brightness(0.95); }
-
-  .ghost-btn { padding: 9px 12px; background: none; color: #8a7e6e; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; font-family: inherit; }
-
-  .feed-input { width: 100%; padding: 10px 12px; border: 1px solid #c9b99a; border-radius: 8px; font-size: 14px; font-family: inherit; background: #faf7f2; color: #2a2520; outline: none; transition: border-color 0.15s; }
-  .feed-input:focus { border-color: #8b5e3c; }
-
-  .sample-btn { padding: 7px 12px; background: #e8e0d4; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; color: #5a5040; transition: background 0.12s; }
-  .sample-btn:hover { background: #ddd5c8; }
-
-  .nav-item { transition: background 0.12s; }
-  .nav-item:hover { background: #e8e0d4; }
-
-  .feed-item:hover .remove-btn { opacity: 1; }
-  .remove-btn { background: none; border: none; cursor: pointer; font-size: 18px; color: #b0a690; padding: 4px 10px 4px 4px; font-family: inherit; opacity: 0; transition: opacity 0.15s; }
-
-  .icon-btn { background: none; border: none; cursor: pointer; font-size: 16px; color: #8a7e6e; padding: 6px 8px; border-radius: 6px; font-family: inherit; transition: background 0.12s; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
-  .icon-btn:hover { background: #f0ebe3; }
-
-  .back-btn { background: none; border: none; cursor: pointer; font-size: 14px; color: #8b5e3c; padding: 6px 8px; font-family: inherit; flex-shrink: 0; display: inline-flex; align-items: center; line-height: 1; }
-
-  .topbar-btn { background: none; border: 1px solid #ddd5c8; cursor: pointer; font-size: 12px; color: #5a5040; padding: 5px 12px; border-radius: 6px; font-family: inherit; white-space: nowrap; transition: background 0.12s; }
-  .topbar-btn:hover { background: #f0ebe3; }
-
-  .article-card { display: block; width: 100%; text-align: left; padding: 14px 16px; border: 1px solid; border-radius: 10px; cursor: pointer; margin-top: 8px; font-family: inherit; transition: box-shadow 0.15s, transform 0.12s; }
-  .article-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.06); transform: translateY(-1px); }
-  .article-card:active { transform: translateY(0); box-shadow: none; }
-
-  .read-toggle-btn { opacity: 0; transition: opacity 0.15s; }
-  .read-toggle-btn.unread { opacity: 1; }
-  .article-card:hover .read-toggle-btn { opacity: 1; }
-  .read-toggle-btn:hover { background: #e8e0d4; }
-
-  .article-body { font-family: 'Newsreader', Georgia, serif; font-size: 17px; line-height: 1.75; color: #2a2520; word-wrap: break-word; overflow-wrap: break-word; }
-  .article-body p { margin-bottom: 1.2em; }
-  .article-body a { color: #8b5e3c; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
-  .article-body img { max-width: 100%; height: auto; display: block; margin: 1em auto; }
-  .article-body figure { margin: 1.5em 0; text-align: center; }
-  .article-body figure img { margin: 0 auto; }
-  .article-body figcaption { font-size: 14px; color: #8a7e6e; margin-top: 8px; text-align: center; font-style: italic; }
-  .article-body h1, .article-body h2, .article-body h3 { font-family: 'Newsreader', Georgia, serif; margin: 1.4em 0 0.5em; color: #1a1510; }
-  .article-body blockquote { border-left: 3px solid #c9b99a; padding-left: 1.2em; margin: 1.2em 0; color: #5a5040; font-style: italic; }
-  .article-body pre { background: #f5f0e8; padding: 1em; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 1em 0; white-space: pre-wrap; word-break: break-all; border: 1px solid #e8e0d4; }
-  .article-body pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; }
-  .article-body code { background: #f0ebe3; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
-
-  .article-body .embed-block { position: relative; background: #faf8f4; border: 1px solid #e0dbd3; border-radius: 10px; padding: 24px 28px; margin: 1.2em 0; }
-  .article-body .embed-block-label { position: absolute; top: 12px; right: 14px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; color: #8a7e9a; background: #f0edf5; border: 1px solid #ddd8e8; border-radius: 5px; padding: 2px 8px; font-family: 'DM Sans', -apple-system, sans-serif; }
-  .article-body .embed-block-content { font-family: 'Newsreader', Georgia, serif; font-size: 16px; line-height: 1.65; color: #2a2520; }
-  .article-body .embed-block-content code { background: #ece7df; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
-  .article-body ul, .article-body ol { padding-left: 1.5em; margin-bottom: 1.2em; }
-  .article-body li { margin-bottom: 0.4em; }
-
-  @media (max-width: 767px) {
-    .remove-btn { opacity: 0.5 !important; }
-    .article-body { font-size: 16px; line-height: 1.7; }
-    .article-card { padding: 12px 14px; }
-  }
-`;
