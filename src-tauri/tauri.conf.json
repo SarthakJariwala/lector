@@ -30,7 +30,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https://* http://*; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' https://* http://* data:"
+      "csp": "default-src 'self'; connect-src 'self' https://* http://*; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' https://* http://* data:; frame-src https://www.youtube.com https://youtube.com https://m.youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com"
     }
   }
 }

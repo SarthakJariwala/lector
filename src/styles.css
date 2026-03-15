@@ -51,6 +51,9 @@
 .article-body pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; }
 .article-body code { background: #f0ebe3; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
 
+.article-body .video-embed { position: relative; width: 100%; aspect-ratio: 16 / 9; margin: 1.4em 0; border: 1px solid #e0dbd3; border-radius: 10px; overflow: hidden; background: #000; }
+.article-body .video-embed iframe { width: 100%; height: 100%; border: 0; display: block; }
+
 .article-body .embed-block { position: relative; background: #faf8f4; border: 1px solid #e0dbd3; border-radius: 10px; padding: 24px 28px; margin: 1.2em 0; }
 .article-body .embed-block-label { position: absolute; top: 12px; right: 14px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; color: #8a7e9a; background: #f0edf5; border: 1px solid #ddd8e8; border-radius: 5px; padding: 2px 8px; font-family: 'DM Sans', -apple-system, sans-serif; }
 .article-body .embed-block-content { font-family: 'Newsreader', Georgia, serif; font-size: 16px; line-height: 1.65; color: #2a2520; }

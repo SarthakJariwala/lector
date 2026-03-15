@@ -19,6 +19,118 @@ import {
   setSyncConfig,
 } from "./db";
 
+const YOUTUBE_EMBED_HOSTS = new Set([
+  "www.youtube.com",
+  "youtube.com",
+  "m.youtube.com",
+  "www.youtube-nocookie.com",
+  "youtube-nocookie.com",
+  "youtu.be",
+]);
+
+const YOUTUBE_EMBED_ALLOW =
+  "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+
+const YOUTUBE_EMBED_QUERY_PARAMS = new Set([
+  "autoplay",
+  "cc_load_policy",
+  "controls",
+  "end",
+  "index",
+  "list",
+  "loop",
+  "modestbranding",
+  "mute",
+  "playlist",
+  "playsinline",
+  "rel",
+  "si",
+  "start",
+]);
+
+const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+
+function parseYouTubeTimeToSeconds(value) {
+  if (!value) return null;
+  if (/^\d+$/.test(value)) return Number(value);
+  const match = value.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/i);
+  if (!match) return null;
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  const total = hours * 3600 + minutes * 60 + seconds;
+  return total > 0 ? total : null;
+}
+
+function copyAllowedYouTubeParams(fromParams, toParams) {
+  for (const [key, value] of fromParams.entries()) {
+    if (YOUTUBE_EMBED_QUERY_PARAMS.has(key)) {
+      toParams.set(key, value);
+    }
+  }
+}
+
+function parseYouTubeVideoId(value) {
+  if (!value) return null;
+  const videoId = value.trim();
+  if (!YOUTUBE_VIDEO_ID_PATTERN.test(videoId)) return null;
+  return videoId;
+}
+
+function normalizeYouTubeEmbedSrc(src) {
+  if (!src) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(src, "https://reader.local");
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "https:") return null;
+  const host = parsed.hostname.toLowerCase();
+  if (!YOUTUBE_EMBED_HOSTS.has(host)) return null;
+
+  let embedUrl;
+  if (host === "youtu.be") {
+    const videoId = parseYouTubeVideoId(
+      parsed.pathname.replace(/^\/+/, "").split("/")[0]
+    );
+    if (!videoId) return null;
+    embedUrl = new URL(`https://www.youtube.com/embed/${videoId}`);
+  } else if (parsed.pathname === "/watch") {
+    const videoId = parseYouTubeVideoId(parsed.searchParams.get("v"));
+    if (!videoId) return null;
+    embedUrl = new URL(`https://www.youtube.com/embed/${videoId}`);
+  } else if (parsed.pathname.startsWith("/embed/")) {
+    embedUrl = new URL(`${parsed.origin}${parsed.pathname}`);
+  } else {
+    return null;
+  }
+
+  copyAllowedYouTubeParams(parsed.searchParams, embedUrl.searchParams);
+  if (!embedUrl.searchParams.has("start")) {
+    const start = parseYouTubeTimeToSeconds(parsed.searchParams.get("t"));
+    if (start !== null) embedUrl.searchParams.set("start", String(start));
+  }
+  return embedUrl.toString();
+}
+
+function extractAtomEntryContent(entry) {
+  const node = entry.querySelector("content") || entry.querySelector("summary");
+  if (!node) return "";
+
+  const type = (node.getAttribute("type") || "").toLowerCase();
+  if (type === "xhtml" && node.children.length > 0) {
+    const serializer = new XMLSerializer();
+    return Array.from(node.children)
+      .map((child) => serializer.serializeToString(child))
+      .join("");
+  }
+
+  return node.textContent || "";
+}
+
 function parseRSS(xmlText) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlText, "text/xml");
@@ -38,10 +150,7 @@ function parseRSS(xmlText) {
           entry.querySelector("published")?.textContent ||
           entry.querySelector("updated")?.textContent ||
           "",
-        content:
-          entry.querySelector("content")?.textContent ||
-          entry.querySelector("summary")?.textContent ||
-          "",
+        content: extractAtomEntryContent(entry),
         author: entry.querySelector("author > name")?.textContent || "",
       });
     });
@@ -133,6 +242,32 @@ function processArticleContent(html) {
     wrapper.appendChild(content);
     textarea.replaceWith(wrapper);
   });
+
+  doc.querySelectorAll("iframe").forEach((iframe) => {
+    const normalizedSrc = normalizeYouTubeEmbedSrc(iframe.getAttribute("src") || "");
+    if (!normalizedSrc) {
+      iframe.remove();
+      return;
+    }
+
+    iframe.setAttribute("src", normalizedSrc);
+    iframe.setAttribute("loading", "lazy");
+    iframe.setAttribute("allow", YOUTUBE_EMBED_ALLOW);
+    iframe.setAttribute("allowfullscreen", "");
+    iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+    iframe.removeAttribute("srcdoc");
+    Array.from(iframe.attributes).forEach((attr) => {
+      if (attr.name.toLowerCase().startsWith("on")) {
+        iframe.removeAttribute(attr.name);
+      }
+    });
+
+    const wrapper = doc.createElement("div");
+    wrapper.className = "video-embed";
+    iframe.replaceWith(wrapper);
+    wrapper.appendChild(iframe);
+  });
+
   return doc.body.innerHTML;
 }
 
