@@ -24,7 +24,13 @@ npm install
 # Run in development mode (hot reload)
 cargo tauri dev
 
-# Build for production
+# Build macOS .app bundle
+make build
+
+# Build and install/update app in /Applications (macOS)
+make build-install
+
+# Direct Tauri build (all platforms)
 cargo tauri build
 ```
 
