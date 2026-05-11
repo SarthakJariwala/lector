@@ -220,9 +220,85 @@ function stripHtml(html) {
   return tmp.textContent || tmp.innerText || "";
 }
 
+function topLevelAncestor(node, root) {
+  let cur = node;
+  while (cur && cur.parentNode && cur.parentNode !== root) {
+    cur = cur.parentNode;
+  }
+  return cur && cur.parentNode === root ? cur : null;
+}
+
+function wrapAsideMarkers(doc) {
+  const body = doc.body;
+  const collectTextNodes = () => {
+    const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT, null);
+    const out = [];
+    let n;
+    while ((n = walker.nextNode())) out.push(n);
+    return out;
+  };
+
+  let nodes = collectTextNodes();
+  for (let i = 0; i < nodes.length; i++) {
+    const openText = nodes[i];
+    if (!openText.parentNode || !/<aside>/i.test(openText.nodeValue)) continue;
+
+    let closeText = null;
+    for (let j = i + 1; j < nodes.length; j++) {
+      const candidate = nodes[j];
+      if (!candidate.parentNode) continue;
+      if (/<\/aside>/i.test(candidate.nodeValue)) {
+        closeText = candidate;
+        break;
+      }
+    }
+    if (!closeText) {
+      openText.nodeValue = openText.nodeValue.replace(/<aside>/gi, "");
+      continue;
+    }
+
+    const openBlock = topLevelAncestor(openText, body);
+    const closeBlock = topLevelAncestor(closeText, body);
+    if (!openBlock || !closeBlock) continue;
+
+    openText.nodeValue = openText.nodeValue.replace(/<aside>/i, "");
+    closeText.nodeValue = closeText.nodeValue.replace(/<\/aside>/i, "");
+
+    const aside = doc.createElement("aside");
+    aside.className = "callout";
+    openBlock.before(aside);
+
+    let cursor = openBlock;
+    while (cursor) {
+      const next = cursor.nextSibling;
+      aside.appendChild(cursor);
+      if (cursor === closeBlock) break;
+      cursor = next;
+    }
+
+    [openBlock, closeBlock].forEach((block) => {
+      if (
+        block &&
+        block.nodeName === "P" &&
+        !block.textContent.trim() &&
+        block.children.length === 0
+      ) {
+        block.remove();
+      }
+    });
+
+    nodes = collectTextNodes();
+    i = -1;
+  }
+}
+
 function processArticleContent(html) {
   if (!html) return html;
   const doc = new DOMParser().parseFromString(html, "text/html");
+  wrapAsideMarkers(doc);
+  doc.querySelectorAll("aside").forEach((aside) => {
+    if (!aside.classList.contains("callout")) aside.classList.add("callout");
+  });
   doc.querySelectorAll("textarea").forEach((textarea) => {
     const wrapper = doc.createElement("div");
     wrapper.className = "embed-block";

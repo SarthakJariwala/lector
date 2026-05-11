@@ -58,6 +58,12 @@
 .article-body .embed-block-label { position: absolute; top: 12px; right: 14px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; color: #8a7e9a; background: #f0edf5; border: 1px solid #ddd8e8; border-radius: 5px; padding: 2px 8px; font-family: 'DM Sans', -apple-system, sans-serif; }
 .article-body .embed-block-content { font-family: 'Newsreader', Georgia, serif; font-size: 16px; line-height: 1.65; color: #2a2520; }
 .article-body .embed-block-content code { background: #ece7df; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; }
+
+.article-body aside { background: #f7f1e3; border-left: 3px solid #c9b99a; border-radius: 8px; padding: 1em 1.2em; margin: 1.2em 0; color: #3a342a; }
+.article-body aside > :first-child { margin-top: 0; }
+.article-body aside > :last-child { margin-bottom: 0; }
+.article-body aside p { margin-bottom: 0.6em; }
+.article-body aside p:last-child { margin-bottom: 0; }
 .article-body ul, .article-body ol { padding-left: 1.5em; margin-bottom: 1.2em; }
 .article-body li { margin-bottom: 0.4em; }
 
