@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import {
@@ -358,6 +358,235 @@ const SAMPLE_FEEDS = [
   { url: "https://lucumr.pocoo.org/feed.xml", name: "Armin Ronacher" },
 ];
 
+const ARTICLE_GROUPS = ["Today", "Yesterday", "This week", "Earlier"];
+const DATE_DIVIDER_ROW_HEIGHT = 42;
+const ARTICLE_ROW_HEIGHT_DESKTOP = 176;
+const ARTICLE_ROW_HEIGHT_MOBILE = 192;
+const LIST_OVERSCAN_PX = 1100;
+
+const FEED_COLORS = [
+  "#8b5e3c",
+  "#5b7a8e",
+  "#6b7a4c",
+  "#a36b4e",
+  "#7b6a8c",
+  "#b67a5a",
+  "#5e8068",
+  "#6b6052",
+  "#9a6e7f",
+  "#4e6b8b",
+];
+
+const articleMetadataCache = new Map();
+
+const ICON_PATHS = {
+  inbox: (
+    <>
+      <path d="M3 12h4l2 3h6l2-3h4" />
+      <path d="M3 7l2-3h14l2 3v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+    </>
+  ),
+  circle: <circle cx="12" cy="12" r="7" />,
+  star: (
+    <polygon points="12 3 14.5 9.3 21 9.8 16 14.2 17.6 20.6 12 17.2 6.4 20.6 8 14.2 3 9.8 9.5 9.3" />
+  ),
+  starFill: (
+    <polygon
+      fill="currentColor"
+      points="12 3 14.5 9.3 21 9.8 16 14.2 17.6 20.6 12 17.2 6.4 20.6 8 14.2 3 9.8 9.5 9.3"
+    />
+  ),
+  plus: (
+    <>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </>
+  ),
+  menu: (
+    <>
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h16" />
+    </>
+  ),
+  arrowLeft: (
+    <>
+      <path d="M19 12H5" />
+      <path d="M12 19l-7-7 7-7" />
+    </>
+  ),
+  refresh: (
+    <>
+      <path d="M21 12a9 9 0 1 1-3-6.7" />
+      <path d="M21 4v5h-5" />
+    </>
+  ),
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 0 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 0 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 0 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+    </>
+  ),
+  external: (
+    <>
+      <path d="M14 4h6v6" />
+      <path d="M10 14 20 4" />
+      <path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6" />
+    </>
+  ),
+  check: <polyline points="20 6 9 17 4 12" />,
+  close: (
+    <>
+      <path d="M6 6l12 12" />
+      <path d="M18 6 6 18" />
+    </>
+  ),
+};
+
+function Icon({ name, className = "icon" }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+      {ICON_PATHS[name]}
+    </svg>
+  );
+}
+
+function hashString(value) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function getFeedInitials(name = "") {
+  const words = name
+    .replace(/https?:\/\//, "")
+    .split(/[\s./_-]+/)
+    .filter(Boolean);
+  if (words.length === 0) return "LF";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0][0]}${words[1][0]}`.toUpperCase();
+}
+
+function getFeedColor(feed) {
+  const key = feed?.url || feed?.name || "lector";
+  return FEED_COLORS[hashString(key) % FEED_COLORS.length];
+}
+
+function estimateReadTime(content = "") {
+  const words = stripHtml(content).trim().split(/\s+/).filter(Boolean).length;
+  return `${Math.max(1, Math.ceil(words / 225))} min`;
+}
+
+function getDateGroup(dateStr) {
+  const published = new Date(dateStr);
+  if (!dateStr || Number.isNaN(published.getTime())) return "Earlier";
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfPublished = new Date(
+    published.getFullYear(),
+    published.getMonth(),
+    published.getDate(),
+  );
+  const diffDays = Math.floor(
+    (startOfToday.getTime() - startOfPublished.getTime()) / 86400000,
+  );
+
+  if (diffDays <= 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 7) return "This week";
+  return "Earlier";
+}
+
+function groupArticleRowsByDate(rows) {
+  return rows.reduce((groups, row) => {
+    const group = getDateGroup(row.published);
+    groups[group] = groups[group] || [];
+    groups[group].push(row);
+    return groups;
+  }, {});
+}
+
+function getArticleExcerpt(article) {
+  const text = stripHtml(article.content).replace(/\s+/g, " ").trim();
+  return text || article.link || "Open the original article to read more.";
+}
+
+function getArticleMetadata(article) {
+  const cached = articleMetadataCache.get(article.id);
+  if (cached?.content === article.content) return cached.metadata;
+
+  const metadata = {
+    excerpt: getArticleExcerpt(article),
+    readTime: estimateReadTime(article.content),
+  };
+  articleMetadataCache.set(article.id, {
+    content: article.content,
+    metadata,
+  });
+  return metadata;
+}
+
+function buildVirtualRows(groupedArticles) {
+  return ARTICLE_GROUPS.flatMap((group) => {
+    const articles = groupedArticles[group] || [];
+    if (articles.length === 0) return [];
+    return [
+      { id: `divider:${group}`, type: "divider", label: group },
+      ...articles.map((article) => ({
+        id: article.id,
+        type: "article",
+        article,
+      })),
+    ];
+  });
+}
+
+function addVirtualLayout(rows, articleRowHeight) {
+  let offset = 0;
+  const items = rows.map((row) => {
+    const height =
+      row.type === "divider" ? DATE_DIVIDER_ROW_HEIGHT : articleRowHeight;
+    const item = { ...row, offset, height };
+    offset += height;
+    return item;
+  });
+  return { items, totalHeight: offset };
+}
+
+function firstRowEndingAfter(items, y) {
+  let low = 0;
+  let high = items.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (items[mid].offset + items[mid].height <= y) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+function firstRowStartingAtOrAfter(items, y) {
+  let low = 0;
+  let high = items.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (items[mid].offset < y) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+function getVisibleVirtualRows(items, scrollTop, viewportHeight) {
+  if (items.length === 0) return [];
+  const startY = Math.max(0, scrollTop - LIST_OVERSCAN_PX);
+  const endY = scrollTop + viewportHeight + LIST_OVERSCAN_PX;
+  const start = Math.max(0, firstRowEndingAfter(items, startY) - 2);
+  const end = Math.min(items.length, firstRowStartingAtOrAfter(items, endY) + 2);
+  return items.slice(start, end);
+}
+
 function useIsMobile() {
   const [m, setM] = useState(window.innerWidth < 768);
   useEffect(() => {
@@ -390,7 +619,14 @@ export default function RSSReader() {
   const [syncTokenInput, setSyncTokenInput] = useState("");
   const [syncConfigError, setSyncConfigError] = useState("");
   const [syncSaving, setSyncSaving] = useState(false);
+  const [readerProgress, setReaderProgress] = useState(0);
   const readerRef = useRef(null);
+  const listRef = useRef(null);
+  const lastListScrollTopRef = useRef(0);
+  const [listViewport, setListViewport] = useState({
+    scrollTop: 0,
+    height: typeof window === "undefined" ? 800 : window.innerHeight,
+  });
   const loadSeq = useRef(0);
   const syncInFlight = useRef(false);
 
@@ -519,6 +755,59 @@ export default function RSSReader() {
   useEffect(() => {
     if (hydrated && feeds.length > 0) refreshAllFeeds();
   }, [hydrated, feeds.length]);
+
+  useEffect(() => {
+    const el = readerRef.current;
+    if (!selectedArticle || !el) {
+      setReaderProgress(0);
+      return undefined;
+    }
+
+    const updateProgress = () => {
+      const max = el.scrollHeight - el.clientHeight;
+      setReaderProgress(max > 0 ? Math.min(100, (el.scrollTop / max) * 100) : 0);
+    };
+
+    el.addEventListener("scroll", updateProgress);
+    updateProgress();
+    return () => el.removeEventListener("scroll", updateProgress);
+  }, [selectedArticle]);
+
+  useEffect(() => {
+    if (selectedArticle) return undefined;
+    const el = listRef.current;
+    if (!el) return undefined;
+
+    const restoredTop = Math.min(
+      lastListScrollTopRef.current,
+      Math.max(0, el.scrollHeight - el.clientHeight),
+    );
+    if (Math.abs(el.scrollTop - restoredTop) > 1) {
+      el.scrollTop = restoredTop;
+    }
+
+    const measure = () => {
+      setListViewport((prev) => {
+        const next = {
+          scrollTop: el.scrollTop,
+          height: el.clientHeight || prev.height,
+        };
+        return prev.scrollTop === next.scrollTop && prev.height === next.height
+          ? prev
+          : next;
+      });
+    };
+
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [selectedArticle]);
 
   useEffect(() => {
     if (!hydrated || !syncConfigured) return;
@@ -656,7 +945,7 @@ export default function RSSReader() {
   };
 
   const handleMarkAllRead = async () => {
-    const ids = getFilteredArticles().map((a) => a.id);
+    const ids = filteredArticles.map((a) => a.id);
     await dbMarkAllRead(ids);
     setArticles((prev) => {
       const idSet = new Set(ids);
@@ -674,14 +963,54 @@ export default function RSSReader() {
     }, 0);
   };
 
-  const getFilteredArticles = () => {
+  const handleListScroll = useCallback((event) => {
+    const el = event.currentTarget;
+    lastListScrollTopRef.current = el.scrollTop;
+    setListViewport((prev) => {
+      const next = {
+        scrollTop: el.scrollTop,
+        height: el.clientHeight || prev.height,
+      };
+      return prev.scrollTop === next.scrollTop && prev.height === next.height
+        ? prev
+        : next;
+    });
+  }, []);
+
+  const filteredArticles = useMemo(() => {
     let f = selectedFeed
       ? articles.filter((a) => a.feedUrl === selectedFeed)
       : articles;
     if (viewFilter === "unread") f = f.filter((a) => !a.is_read);
     if (viewFilter === "starred") f = f.filter((a) => a.is_starred);
     return f;
-  };
+  }, [articles, selectedFeed, viewFilter]);
+
+  const articleRows = useMemo(
+    () =>
+      filteredArticles.map((article) => {
+        const metadata = getArticleMetadata(article);
+        return {
+          ...article,
+          ...metadata,
+        };
+      }),
+    [filteredArticles],
+  );
+
+  const selectedArticleReadTime = useMemo(
+    () => (selectedArticle ? getArticleMetadata(selectedArticle).readTime : ""),
+    [selectedArticle],
+  );
+
+  const selectedArticleContent = useMemo(
+    () =>
+      selectedArticle
+        ? processArticleContent(selectedArticle.content) ||
+          "<p>No content available. Open the original article to read more.</p>"
+        : "",
+    [selectedArticle],
+  );
 
   const unreadCount = (feedUrl) => {
     const fa = feedUrl
@@ -691,179 +1020,154 @@ export default function RSSReader() {
   };
 
   const selectNav = (feed, filter) => {
+    lastListScrollTopRef.current = 0;
+    if (listRef.current) listRef.current.scrollTop = 0;
     setSelectedFeed(feed);
     setSelectedArticle(null);
     setViewFilter(filter);
     if (isMobile) setSidebarOpen(false);
   };
-  const filteredArticles = getFilteredArticles();
+  const selectedFeedRecord = feeds.find((feed) => feed.url === selectedFeed);
+  const totalUnread = unreadCount(null);
+  const starredCount = articles.filter((article) => article.is_starred).length;
+  const groupedArticles = useMemo(
+    () => groupArticleRowsByDate(articleRows),
+    [articleRows],
+  );
+  const rawVirtualRows = useMemo(
+    () => buildVirtualRows(groupedArticles),
+    [groupedArticles],
+  );
+  const articleRowHeight = isMobile
+    ? ARTICLE_ROW_HEIGHT_MOBILE
+    : ARTICLE_ROW_HEIGHT_DESKTOP;
+  const { items: virtualRows, totalHeight: virtualListHeight } = useMemo(
+    () => addVirtualLayout(rawVirtualRows, articleRowHeight),
+    [articleRowHeight, rawVirtualRows],
+  );
+  const visibleRows = useMemo(
+    () =>
+      getVisibleVirtualRows(
+        virtualRows,
+        Math.min(listViewport.scrollTop, Math.max(0, virtualListHeight - listViewport.height)),
+        listViewport.height,
+      ),
+    [listViewport.height, listViewport.scrollTop, virtualListHeight, virtualRows],
+  );
+  const listTitle = selectedFeedRecord
+    ? selectedFeedRecord.name
+    : viewFilter === "unread"
+      ? "Unread"
+      : viewFilter === "starred"
+        ? "Starred"
+        : "All Articles";
+  const listSubtitle = selectedFeedRecord
+    ? `${filteredArticles.length} article${filteredArticles.length === 1 ? "" : "s"}`
+    : viewFilter === "unread"
+      ? `${filteredArticles.length} unread`
+      : viewFilter === "starred"
+        ? `${filteredArticles.length} saved`
+        : `${totalUnread} unread`;
+  const topbarTitle = selectedArticle ? selectedArticle.feedName : listTitle;
+  const topbarMeta = selectedArticle
+    ? formatDate(selectedArticle.published)
+    : listSubtitle;
+  const sidebarState = isMobile ? "full" : sidebarOpen ? "full" : "hidden";
 
   if (!hydrated) {
     return (
-      <div
-        style={{
-          display: "flex",
-          height: "100vh",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily:
-            "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
-          background: "#faf7f2",
-          color: "#8a7e6e",
-        }}
-      >
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 48, color: "#c9b99a", marginBottom: 16 }}>
-            ◈
-          </div>
-          <p style={{ fontSize: 14 }}>Loading…</p>
-        </div>
+      <div className="loading-screen">
+        <div className="loading-mark">L</div>
+        <p>Loading...</p>
       </div>
     );
   }
 
   return (
     <div
-      style={{
-        display: "flex",
-        height: "100vh",
-        width: "100%",
-        fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
-        background: "#faf7f2",
-        color: "#2a2520",
-        overflow: "hidden",
-        position: "relative",
-      }}
+      className="app"
+      data-sidebar={sidebarState}
+      data-mobile-sidebar={sidebarOpen ? "open" : "closed"}
+      data-density="comfortable"
     >
       {isMobile && sidebarOpen && (
-        <div
+        <button
+          className="sidebar-scrim"
+          aria-label="Close sidebar"
           onClick={() => setSidebarOpen(false)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(30,25,18,0.35)",
-            zIndex: 90,
-            backdropFilter: "blur(2px)",
-            WebkitBackdropFilter: "blur(2px)",
-          }}
         />
       )}
 
       {showSyncConfig && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(30,25,18,0.45)",
-            zIndex: 130,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              width: "min(520px, 100%)",
-              background: "#faf7f2",
-              border: "1px solid #ddd5c8",
-              borderRadius: 12,
-              boxShadow: "0 12px 32px rgba(0,0,0,0.22)",
-              padding: isMobile ? "16px" : "18px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 12,
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <div className="modal-backdrop" onClick={() => setShowSyncConfig(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-heading">
               <div>
-                <h3
-                  style={{
-                    fontFamily: "'Newsreader', Georgia, serif",
-                    fontSize: 24,
-                    fontWeight: 500,
-                    color: "#2a2520",
-                    marginBottom: 2,
-                  }}
-                >
-                  Sync Settings
-                </h3>
-                <p style={{ fontSize: 13, color: "#6a6050" }}>
+                <h2>Sync <em>settings</em></h2>
+                <p className="modal-sub">
                   Enter your Worker endpoint and token for this computer.
                 </p>
               </div>
               <button
+                className="icon-btn"
+                type="button"
                 onClick={() => setShowSyncConfig(false)}
-                style={{
-                  border: "none",
-                  background: "none",
-                  color: "#8a7e6e",
-                  fontSize: 22,
-                  cursor: "pointer",
-                  lineHeight: 1,
-                  padding: "2px 4px",
-                  height: 28,
-                }}
+                title="Close"
               >
-                ×
+                <Icon name="close" />
               </button>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#5a5040" }}>
-                Sync endpoint
-              </label>
-              <input
-                type="url"
-                value={syncEndpointInput}
-                onChange={(e) => setSyncEndpointInput(e.target.value)}
-                placeholder="https://lector-sync.your-subdomain.workers.dev/v1/sync"
-                className="feed-input"
-              />
-            </div>
+            <label className="field-label" htmlFor="sync-endpoint">
+              Sync endpoint
+            </label>
+            <input
+              id="sync-endpoint"
+              type="url"
+              value={syncEndpointInput}
+              onChange={(e) => setSyncEndpointInput(e.target.value)}
+              placeholder="https://lector-sync.your-subdomain.workers.dev/v1/sync"
+            />
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#5a5040" }}>
-                Sync token
-              </label>
-              <input
-                type="password"
-                value={syncTokenInput}
-                onChange={(e) => setSyncTokenInput(e.target.value)}
-                placeholder="Paste your SYNC_TOKEN"
-                className="feed-input"
-                autoComplete="off"
-              />
-            </div>
+            <label className="field-label" htmlFor="sync-token">
+              Sync token
+            </label>
+            <input
+              id="sync-token"
+              type="password"
+              value={syncTokenInput}
+              onChange={(e) => setSyncTokenInput(e.target.value)}
+              placeholder="Paste your SYNC_TOKEN"
+              autoComplete="off"
+            />
 
-            {syncConfigError && (
-              <div style={{ color: "#b54a30", fontSize: 12 }}>{syncConfigError}</div>
-            )}
+            {syncConfigError && <div className="form-error">{syncConfigError}</div>}
 
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <div className="modal-actions split">
               <button
+                type="button"
+                className="ghost-btn danger"
                 onClick={handleDisableSync}
-                className="ghost-btn"
                 disabled={syncSaving}
-                style={{ color: "#b54a30", border: "1px solid #e6c6bd", borderRadius: 8 }}
               >
                 Disable Sync
               </button>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div className="action-row">
                 <button
-                  onClick={() => setShowSyncConfig(false)}
+                  type="button"
                   className="ghost-btn"
+                  onClick={() => setShowSyncConfig(false)}
                   disabled={syncSaving}
                 >
                   Cancel
                 </button>
                 <button
+                  type="button"
+                  className="primary-btn rust"
                   onClick={handleSaveSyncConfig}
-                  className="primary-btn"
                   disabled={syncSaving}
-                  style={{ opacity: syncSaving ? 0.6 : 1 }}
                 >
-                  {syncSaving ? "Saving…" : "Save"}
+                  {syncSaving ? "Saving..." : "Save"}
                 </button>
               </div>
             </div>
@@ -871,186 +1175,69 @@ export default function RSSReader() {
         </div>
       )}
 
-      {/* Sidebar */}
-      <div
-        style={{
-          background: "#f0ebe3",
-          borderRight: isMobile ? "none" : "1px solid #ddd5c8",
-          display: "flex",
-          flexDirection: "column",
-          flexShrink: 0,
-          overflow: "hidden",
-          ...(isMobile
-            ? {
-                position: "fixed",
-                top: 0,
-                left: 0,
-                bottom: 0,
-                width: "min(290px, 85vw)",
-                zIndex: 100,
-                transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
-                transition: "transform 0.28s cubic-bezier(.4,0,.2,1)",
-                boxShadow: sidebarOpen ? "4px 0 24px rgba(0,0,0,0.15)" : "none",
-              }
-            : {
-                width: sidebarOpen ? 272 : 0,
-                minWidth: sidebarOpen ? 272 : 0,
-                transition: "all 0.25s ease",
-              }),
-        }}
-      >
-        <div
-          style={{
-            padding: "0 18px",
-            borderBottom: "1px solid #ddd5c8",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexShrink: 0,
-            height: 56,
-          }}
-        >
-          <h1
-            style={{
-              fontFamily: "'Newsreader', Georgia, serif",
-              fontSize: 21,
-              fontWeight: 500,
-              color: "#2a2520",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <span style={{ color: "#8b5e3c", fontSize: 19 }}>◈</span> Lector
-          </h1>
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <span className="mark">L</span>
+          <span className="name">
+            L<em>e</em>ctor
+          </span>
           {isMobile && (
             <button
+              className="icon-btn mobile-close"
+              type="button"
               onClick={() => setSidebarOpen(false)}
-              style={{
-                background: "none",
-                border: "none",
-                fontSize: 24,
-                color: "#8a7e6e",
-                cursor: "pointer",
-                padding: "2px 6px",
-                lineHeight: 1,
-              }}
+              title="Close sidebar"
             >
-              ×
+              <Icon name="close" />
             </button>
           )}
         </div>
 
-        <div
-          style={{
-            padding: "10px 10px 6px",
-            borderBottom: "1px solid #ddd5c8",
-            flexShrink: 0,
-          }}
-        >
-          {[
-            {
-              label: "All Articles",
-              icon: "⊞",
-              filter: "all",
-              count: unreadCount(null),
-            },
-            { label: "Unread", icon: "○", filter: "unread" },
-            { label: "Starred", icon: "☆", filter: "starred" },
-          ].map((nav) => (
-            <button
-              key={nav.filter}
-              onClick={() => selectNav(null, nav.filter)}
-              className="nav-item"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                width: "100%",
-                padding: "10px 12px",
-                border: "none",
-                background:
-                  !selectedFeed && viewFilter === nav.filter
-                    ? "#e8e0d4"
-                    : "transparent",
-                cursor: "pointer",
-                borderRadius: 8,
-                fontSize: 14,
-                fontFamily: "inherit",
-                color:
-                  !selectedFeed && viewFilter === nav.filter
-                    ? "#2a2520"
-                    : "#5a5040",
-                fontWeight:
-                  !selectedFeed && viewFilter === nav.filter ? 500 : 400,
-                textAlign: "left",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: 14,
-                  width: 20,
-                  textAlign: "center",
-                  opacity: 0.7,
-                }}
-              >
-                {nav.icon}
-              </span>
-              {nav.label}
-              {nav.count > 0 && <span className="badge">{nav.count}</span>}
-            </button>
-          ))}
+        <div className="sidebar-section">
+          <button
+            className="nav-item"
+            aria-current={!selectedFeed && viewFilter === "all" ? "true" : "false"}
+            onClick={() => selectNav(null, "all")}
+          >
+            <Icon name="inbox" className="icon nav-icon" />
+            <span className="nav-label">All Articles</span>
+            {totalUnread > 0 && <span className="count">{totalUnread}</span>}
+          </button>
+          <button
+            className="nav-item"
+            aria-current={!selectedFeed && viewFilter === "unread" ? "true" : "false"}
+            onClick={() => selectNav(null, "unread")}
+          >
+            <Icon name="circle" className="icon nav-icon" />
+            <span className="nav-label">Unread</span>
+            {totalUnread > 0 && <span className="count">{totalUnread}</span>}
+          </button>
+          <button
+            className="nav-item"
+            aria-current={!selectedFeed && viewFilter === "starred" ? "true" : "false"}
+            onClick={() => selectNav(null, "starred")}
+          >
+            <Icon name="star" className="icon nav-icon" />
+            <span className="nav-label">Starred</span>
+            {starredCount > 0 && <span className="count">{starredCount}</span>}
+          </button>
         </div>
 
-        <div
-          style={{
-            flex: 1,
-            overflow: "auto",
-            padding: 10,
-            WebkitOverflowScrolling: "touch",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "4px 12px 8px",
-            }}
-          >
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                color: "#8a7e6e",
-              }}
-            >
-              Feeds
-            </span>
+        <div className="sidebar-section feed-section">
+          <div className="sidebar-heading">
+            <span>Feeds</span>
             <button
-              onClick={() => setShowAddFeed(!showAddFeed)}
-              style={{
-                width: 28,
-                height: 28,
-                border: "1px solid #c9b99a",
-                background: "none",
-                cursor: "pointer",
-                borderRadius: 6,
-                fontSize: 18,
-                color: "#8b5e3c",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
+              className="add"
+              type="button"
+              onClick={() => setShowAddFeed((open) => !open)}
+              title="Add feed"
             >
-              +
+              <Icon name="plus" className="icon-sm" />
             </button>
           </div>
 
           {showAddFeed && (
-            <div style={{ padding: "6px 4px 12px" }}>
+            <div className="add-feed-panel">
               <input
                 type="url"
                 value={newFeedUrl}
@@ -1059,20 +1246,21 @@ export default function RSSReader() {
                   setError("");
                 }}
                 onKeyDown={(e) => e.key === "Enter" && addFeed()}
-                placeholder="Paste RSS feed URL…"
+                placeholder="Paste RSS feed URL..."
                 className="feed-input"
                 autoFocus
               />
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <div className="action-row">
                 <button
+                  type="button"
                   onClick={addFeed}
                   disabled={loading || !newFeedUrl.trim()}
-                  className="primary-btn"
-                  style={{ opacity: loading || !newFeedUrl.trim() ? 0.5 : 1 }}
+                  className="primary-btn rust"
                 >
-                  {loading ? "Adding…" : "Subscribe"}
+                  {loading ? "Adding..." : "Subscribe"}
                 </button>
                 <button
+                  type="button"
                   onClick={() => {
                     setShowAddFeed(false);
                     setError("");
@@ -1082,409 +1270,253 @@ export default function RSSReader() {
                   Cancel
                 </button>
               </div>
-              {error && (
-                <div style={{ color: "#b54a30", fontSize: 12, marginTop: 6 }}>
-                  {error}
-                </div>
-              )}
+              {error && <div className="form-error">{error}</div>}
               {feeds.length === 0 && (
-                <div
-                  style={{
-                    marginTop: 12,
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 6,
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: 11,
-                      color: "#8a7e6e",
-                      width: "100%",
-                      marginBottom: 2,
-                    }}
-                  >
-                    Quick add:
-                  </span>
-                  {SAMPLE_FEEDS.map((s) => (
-                    <button
-                      key={s.url}
-                      onClick={() => addSampleFeed(s)}
-                      disabled={feeds.some((f) => f.url === s.url) || loading}
-                      className="sample-btn"
-                      style={{
-                        opacity: feeds.some((f) => f.url === s.url) ? 0.4 : 1,
-                      }}
-                    >
-                      {s.name}
-                    </button>
-                  ))}
+                <div className="sample-feeds">
+                  <span>Quick add</span>
+                  <div>
+                    {SAMPLE_FEEDS.map((sample) => (
+                      <button
+                        key={sample.url}
+                        type="button"
+                        onClick={() => addSampleFeed(sample)}
+                        disabled={feeds.some((feed) => feed.url === sample.url) || loading}
+                        className="sample-btn"
+                      >
+                        {sample.name}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
           )}
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            {feeds.map((feed) => (
-              <div
-                key={feed.url}
-                className="feed-item"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  borderRadius: 8,
-                  background:
-                    selectedFeed === feed.url ? "#e8e0d4" : "transparent",
-                }}
-              >
-                {editingFeed === feed.url ? (
-                  <div
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "4px 12px",
-                    }}
-                  >
-                    <span
-                      style={{ fontSize: 8, color: "#8b5e3c", flexShrink: 0 }}
+          <div className="feed-list">
+            {feeds.map((feed) => {
+              const count = unreadCount(feed.url);
+              const active = selectedFeed === feed.url;
+              return (
+                <div key={feed.url} className="feed-row">
+                  {editingFeed === feed.url ? (
+                    <div className="feed-edit">
+                      <span
+                        className="avatar"
+                        style={{ background: getFeedColor(feed) }}
+                      >
+                        {getFeedInitials(feed.name)}
+                      </span>
+                      <input
+                        autoFocus
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleRenameFeed(feed.url, editingName);
+                          if (e.key === "Escape") setEditingFeed(null);
+                        }}
+                        onBlur={() => handleRenameFeed(feed.url, editingName)}
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      className="nav-item feed-item"
+                      aria-current={active ? "true" : "false"}
+                      onClick={() =>
+                        selectNav(active ? null : feed.url, active ? "all" : "unread")
+                      }
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        setEditingFeed(feed.url);
+                        setEditingName(feed.name);
+                      }}
                     >
-                      ●
-                    </span>
-                    <input
-                      autoFocus
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter")
-                          handleRenameFeed(feed.url, editingName);
-                        if (e.key === "Escape") setEditingFeed(null);
-                      }}
-                      onBlur={() => handleRenameFeed(feed.url, editingName)}
-                      style={{
-                        flex: 1,
-                        border: "1px solid #c9b99a",
-                        borderRadius: 6,
-                        padding: "5px 8px",
-                        fontSize: 14,
-                        fontFamily: "inherit",
-                        background: "#faf7f2",
-                        color: "#2a2520",
-                        outline: "none",
-                        minWidth: 0,
-                      }}
-                    />
-                  </div>
-                ) : (
+                      <span
+                        className="avatar"
+                        style={{ background: getFeedColor(feed) }}
+                      >
+                        {getFeedInitials(feed.name)}
+                      </span>
+                      <span className="nav-label">{feed.name}</span>
+                      {count > 0 ? <span className="count">{count}</span> : <span className="dot" />}
+                    </button>
+                  )}
                   <button
-                    onClick={() =>
-                      selectNav(
-                        selectedFeed === feed.url ? null : feed.url,
-                        "unread",
-                      )
-                    }
-                    onDoubleClick={(e) => {
+                    type="button"
+                    className="remove-btn"
+                    title="Unsubscribe"
+                    onClick={(e) => {
                       e.stopPropagation();
-                      setEditingFeed(feed.url);
-                      setEditingName(feed.name);
-                    }}
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "10px 12px",
-                      border: "none",
-                      background: "none",
-                      cursor: "pointer",
-                      fontSize: 14,
-                      fontFamily: "inherit",
-                      color: "#2a2520",
-                      textAlign: "left",
-                      borderRadius: 8,
-                      overflow: "hidden",
-                      minWidth: 0,
+                      removeFeed(feed.url);
                     }}
                   >
-                    <span
-                      style={{ fontSize: 8, color: "#8b5e3c", flexShrink: 0 }}
-                    >
-                      ●
-                    </span>
-                    <span
-                      style={{
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        flex: 1,
-                      }}
-                    >
-                      {feed.name}
-                    </span>
-                    {unreadCount(feed.url) > 0 && (
-                      <span className="badge">{unreadCount(feed.url)}</span>
-                    )}
+                    <Icon name="close" className="icon-sm" />
                   </button>
-                )}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeFeed(feed.url);
-                  }}
-                  className="remove-btn"
-                  title="Unsubscribe"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
 
           {feeds.length === 0 && !showAddFeed && (
-            <div style={{ textAlign: "center", padding: "24px 12px" }}>
-              <p style={{ fontSize: 13, color: "#8a7e6e", marginBottom: 12 }}>
-                No feeds yet
-              </p>
+            <div className="sidebar-empty">
+              <p>No feeds yet</p>
               <button
+                type="button"
+                className="primary-btn rust"
                 onClick={() => setShowAddFeed(true)}
-                className="primary-btn"
               >
-                Add your first feed
+                <Icon name="plus" className="icon-sm" />
+                Add a feed
               </button>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Main */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          minWidth: 0,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: isMobile ? "0 12px" : "0 20px",
-            borderBottom: "1px solid #e8e0d4",
-            background: "#faf7f2",
-            flexShrink: 0,
-            height: 56,
-            gap: 6,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              minWidth: 0,
-              flex: 1,
-            }}
+        <div className="sidebar-footer">
+          <span>
+            <span className={`sync-dot ${syncConfigured ? "on" : ""}`} />
+            <span className="sync-label">
+              {syncConfigured ? "Sync enabled" : "Local only"}
+            </span>
+          </span>
+          <button
+            type="button"
+            className="footer-btn"
+            title="Sync settings"
+            onClick={() => void openSyncConfigDialog()}
           >
+            <Icon name="settings" className="icon-sm" />
+          </button>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <div className="topbar-left">
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              type="button"
               className="icon-btn"
-              style={{ flexShrink: 0 }}
+              onClick={() => setSidebarOpen((open) => !open)}
+              title="Toggle sidebar"
             >
-              ☰
+              <Icon name="menu" />
             </button>
             {selectedArticle && (
               <button
+                type="button"
+                className="icon-btn"
                 onClick={() => setSelectedArticle(null)}
-                className="back-btn"
+                title="Back"
               >
-                ←{!isMobile && " Back"}
+                <Icon name="arrowLeft" />
               </button>
             )}
-            <h2
-              style={{
-                fontFamily: "'Newsreader', Georgia, serif",
-                fontSize: isMobile ? 15 : 17,
-                fontWeight: 500,
-                color: "#2a2520",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                lineHeight: 1,
-                transform: "translateY(1px)",
-              }}
-            >
-              {selectedArticle
-                ? selectedArticle.feedName
-                : selectedFeed
-                  ? feeds.find((f) => f.url === selectedFeed)?.name
-                  : viewFilter === "unread"
-                    ? "Unread"
-                    : viewFilter === "starred"
-                      ? "Starred"
-                      : "All Articles"}
-            </h2>
+            <div className="topbar-title">
+              {topbarTitle}
+              {topbarMeta && <span className="meta">{topbarMeta}</span>}
+            </div>
           </div>
-          <div
-            style={{
-              display: "flex",
-              gap: 6,
-              flexShrink: 0,
-              alignItems: "center",
-            }}
-          >
+
+          <div className="topbar-right">
             {!selectedArticle && selectedFeed && (
-              <div
-                style={{
-                  display: "flex",
-                  background: "#e8e0d4",
-                  borderRadius: 6,
-                  padding: 2,
-                  gap: 1,
-                }}
-              >
-                {["all", "unread"].map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setViewFilter(f)}
-                    style={{
-                      border: "none",
-                      background: viewFilter === f ? "#faf7f2" : "transparent",
-                      borderRadius: 5,
-                      padding: "4px 10px",
-                      fontSize: 12,
-                      fontFamily: "inherit",
-                      color: viewFilter === f ? "#2a2520" : "#8a7e6e",
-                      fontWeight: viewFilter === f ? 500 : 400,
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                      boxShadow:
-                        viewFilter === f
-                          ? "0 1px 2px rgba(0,0,0,0.08)"
-                          : "none",
-                    }}
-                  >
-                    {f === "all"
-                      ? "All"
-                      : `Unread${unreadCount(selectedFeed) > 0 ? ` (${unreadCount(selectedFeed)})` : ""}`}
+              <div className="segmented" aria-label="Feed filter">
+                {["all", "unread"].map((filter) => (
+	                  <button
+	                    type="button"
+	                    key={filter}
+	                    aria-current={viewFilter === filter ? "true" : "false"}
+	                    onClick={() => {
+	                      lastListScrollTopRef.current = 0;
+	                      if (listRef.current) listRef.current.scrollTop = 0;
+	                      setViewFilter(filter);
+	                    }}
+	                  >
+                    {filter === "all" ? "All" : "Unread"}
                   </button>
                 ))}
               </div>
             )}
             {!selectedArticle && filteredArticles.length > 0 && !isMobile && (
-              <button onClick={handleMarkAllRead} className="topbar-btn">
+              <button type="button" onClick={handleMarkAllRead} className="pill-btn">
+                <Icon name="check" className="icon-sm" />
                 Mark all read
               </button>
             )}
-            <button onClick={() => void openSyncConfigDialog()} className="topbar-btn">
-              {syncConfigured ? "Sync Settings" : "Setup Sync"}
-            </button>
+            {selectedArticle?.link && (
+              <button
+                type="button"
+                className="pill-btn"
+                onClick={() => open(selectedArticle.link)}
+              >
+                <Icon name="external" className="icon-sm" />
+                Open original
+              </button>
+            )}
             <button
-              onClick={refreshAllFeeds}
-              disabled={refreshing}
-              className="topbar-btn"
-              style={{ opacity: refreshing ? 0.5 : 1 }}
+              type="button"
+              onClick={() => void openSyncConfigDialog()}
+              className="icon-btn"
+              title={syncConfigured ? "Sync settings" : "Setup sync"}
             >
-              {refreshing ? "…" : "↻"}
+              <Icon name="settings" />
             </button>
+            {!selectedArticle && (
+              <button
+                type="button"
+                onClick={refreshAllFeeds}
+                disabled={refreshing}
+                className="icon-btn"
+                title="Refresh"
+              >
+                <Icon name="refresh" />
+              </button>
+            )}
           </div>
-        </div>
+        </header>
 
         {selectedArticle ? (
-          <div
-            ref={readerRef}
-            style={{
-              flex: 1,
-              overflow: "auto",
-              padding: isMobile ? "20px 14px 56px" : "32px 20px 64px",
-              WebkitOverflowScrolling: "touch",
-            }}
-          >
-            <article style={{ maxWidth: 680, margin: "0 auto" }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginBottom: 14,
-                  flexWrap: "wrap",
-                }}
-              >
-                <span className="feed-tag">{selectedArticle.feedName}</span>
+          <div className="reader-wrap" ref={readerRef}>
+            <div className="progress-bar">
+              <div style={{ "--p": `${readerProgress}%` }} />
+            </div>
+            <article className="reader">
+              <div className="reader-meta">
+                <span>{selectedArticle.feedName}</span>
                 {selectedArticle.author && (
-                  <span style={{ fontSize: 13, color: "#5a5040" }}>
-                    {selectedArticle.author}
-                  </span>
+                  <>
+                    <span className="sep">.</span>
+                    <span className="author">{selectedArticle.author}</span>
+                  </>
                 )}
-                <span style={{ fontSize: 13, color: "#b0a690" }}>
-                  {formatDate(selectedArticle.published)}
+                <span className="time">
+                  {formatDate(selectedArticle.published)} · {selectedArticleReadTime}
                 </span>
               </div>
-              <h1
-                style={{
-                  fontFamily: "'Newsreader', Georgia, serif",
-                  fontSize: isMobile ? 24 : 32,
-                  fontWeight: 500,
-                  lineHeight: 1.25,
-                  color: "#1a1510",
-                  marginBottom: 14,
-                  letterSpacing: "-0.015em",
-                }}
-              >
-                {selectedArticle.title}
-              </h1>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  marginBottom: 24,
-                  paddingBottom: 18,
-                  borderBottom: "1px solid #e8e0d4",
-                  flexWrap: "wrap",
-                }}
-              >
+              <h1 className="reader-title">{selectedArticle.title}</h1>
+              <div className="reader-actions">
                 <button
+                  type="button"
+                  className={`action ${selectedArticle.is_starred ? "active" : ""}`}
                   onClick={() => handleToggleStar(selectedArticle.id)}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: 14,
-                    fontFamily: "inherit",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                    padding: "6px 0",
-                    color: selectedArticle.is_starred ? "#d4a847" : "#888",
-                  }}
                 >
-                  {selectedArticle.is_starred ? "★ Starred" : "☆ Star"}
+                  <Icon
+                    name={selectedArticle.is_starred ? "starFill" : "star"}
+                    className="icon-sm"
+                  />
+                  {selectedArticle.is_starred ? "Starred" : "Star"}
                 </button>
                 {selectedArticle.link && (
-                  <a
-                    href={selectedArticle.link}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      open(selectedArticle.link);
-                    }}
-                    style={{
-                      fontSize: 13,
-                      color: "#8b5e3c",
-                      textDecoration: "none",
-                      fontFamily: "inherit",
-                      cursor: "pointer",
-                    }}
+                  <button
+                    type="button"
+                    className="action"
+                    onClick={() => open(selectedArticle.link)}
                   >
-                    Open original ↗
-                  </a>
+                    <Icon name="external" className="icon-sm" />
+                    Open original
+                  </button>
                 )}
               </div>
               <div
-                className="article-body"
+                className="article-body reader-body"
                 onClick={(e) => {
                   const anchor = e.target.closest("a");
                   if (anchor?.href) {
@@ -1494,213 +1526,166 @@ export default function RSSReader() {
                 }}
                 dangerouslySetInnerHTML={{
                   __html:
-                    processArticleContent(selectedArticle.content) ||
-                    "<p>No content available. Open the original article to read more.</p>",
+                    selectedArticleContent,
                 }}
               />
             </article>
           </div>
         ) : (
-          <div
-            style={{
-              flex: 1,
-              overflow: "auto",
-              padding: isMobile ? "2px 8px 16px" : "4px 16px 16px",
-              WebkitOverflowScrolling: "touch",
-            }}
-          >
+          <div className="list-wrap" ref={listRef} onScroll={handleListScroll}>
             {filteredArticles.length === 0 ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  height: "100%",
-                  padding: 28,
-                  textAlign: "center",
-                }}
-              >
+              <div className="empty">
+                <div className="ornament">{feeds.length === 0 ? "¶" : "✦"}</div>
                 {feeds.length === 0 ? (
                   <>
-                    <div
-                      style={{
-                        fontSize: 48,
-                        color: "#c9b99a",
-                        marginBottom: 16,
-                      }}
-                    >
-                      ◈
-                    </div>
-                    <h3
-                      style={{
-                        fontFamily: "'Newsreader', Georgia, serif",
-                        fontSize: 22,
-                        fontWeight: 500,
-                        color: "#2a2520",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Welcome to Lector
-                    </h3>
-                    <p
-                      style={{
-                        fontSize: 14,
-                        color: "#8a7e6e",
-                        marginBottom: 20,
-                        maxWidth: 300,
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      Your personal reading space. Add an RSS feed to get
-                      started.
+                    <h2>
+                      A quiet <em>library</em>, waiting for its first volume.
+                    </h2>
+                    <p>
+                      Subscribe to your first feed to start reading. Lector will refresh,
+                      sync, and keep the articles close at hand.
                     </p>
-                    <button
-                      onClick={() => {
-                        setSidebarOpen(true);
-                        setTimeout(() => setShowAddFeed(true), 150);
-                      }}
-                      className="primary-btn"
-                      style={{ padding: "10px 20px", fontSize: 14 }}
-                    >
-                      + Add a feed
-                    </button>
+                    <div className="actions">
+                      <button
+                        type="button"
+                        className="primary-btn rust"
+                        onClick={() => {
+                          setSidebarOpen(true);
+                          setShowAddFeed(true);
+                        }}
+                      >
+                        <Icon name="plus" className="icon-sm" />
+                        Add your first feed
+                      </button>
+                    </div>
+                  </>
+                ) : viewFilter === "starred" ? (
+                  <>
+                    <h2>
+                      Nothing <em>starred</em> yet.
+                    </h2>
+                    <p>Star an article from the reader to keep it within reach.</p>
                   </>
                 ) : (
                   <>
-                    <div
-                      style={{
-                        fontSize: 48,
-                        color: "#c9b99a",
-                        marginBottom: 16,
-                      }}
-                    >
-                      ✓
-                    </div>
-                    <h3
-                      style={{
-                        fontFamily: "'Newsreader', Georgia, serif",
-                        fontSize: 22,
-                        fontWeight: 500,
-                        marginBottom: 8,
-                      }}
-                    >
-                      All caught up
-                    </h3>
-                    <p style={{ fontSize: 14, color: "#8a7e6e" }}>
+                    <h2>
+                      Inbox <em>zero</em>.
+                    </h2>
+                    <p>
                       {viewFilter === "unread"
                         ? "No unread articles."
-                        : viewFilter === "starred"
-                          ? "No starred articles."
-                          : "No articles to show."}
+                        : "No articles to show."}
                     </p>
+                    <div className="actions">
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={refreshAllFeeds}
+                        disabled={refreshing}
+                      >
+                        <Icon name="refresh" className="icon-sm" />
+                        Check for updates
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
             ) : (
-              filteredArticles.map((article) => (
-                <button
-                  key={article.id}
-                  onClick={() => openArticle(article)}
-                  className="article-card"
+              <div className="list-inner">
+                <div className="list-header">
+                  <h1>
+                    {selectedFeedRecord ? selectedFeedRecord.name : listTitle}
+                  </h1>
+                  <span className="count-meta">{listSubtitle}</span>
+                </div>
+                <div
+                  className="virtual-list"
                   style={{
-                    background: article.is_read ? "#faf7f2" : "#fff",
-                    borderColor: article.is_read ? "#ede6db" : "#e8e0d4",
+                    "--article-row-height": `${articleRowHeight}px`,
+                    height: `${virtualListHeight}px`,
                   }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginBottom: 5,
-                    }}
-                  >
-                    <span className="feed-tag">{article.feedName}</span>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span style={{ fontSize: 11, color: "#b0a690" }}>
-                        {formatDate(article.published)}
-                      </span>
-                      <span
+                  {visibleRows.map((row) =>
+                    row.type === "divider" ? (
+                      <div
+                        key={row.id}
+                        className="virtual-row divider-row"
+                        style={{ "--row-y": `${row.offset}px` }}
+                      >
+                        <div className="date-divider">{row.label}</div>
+                      </div>
+                    ) : (
+                      <div
+                        key={row.id}
+                        className="virtual-row article-row"
+                        style={{ "--row-y": `${row.offset}px` }}
+                      >
+                        {(() => {
+                          const article = row.article;
+                          return (
+                      <article
+                        key={article.id}
+                        className={`article-card ${article.is_read ? "read" : ""}`}
                         role="button"
-                        title={
-                          article.is_read ? "Mark as unread" : "Mark as read"
-                        }
-                        className={`read-toggle-btn${article.is_read ? "" : " unread"}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleRead(article.id);
-                        }}
-                        style={{
-                          fontSize: 10,
-                          color: "#8b5e3c",
-                          cursor: "pointer",
-                          padding: "2px 4px",
-                          borderRadius: 4,
-                          lineHeight: 1,
+                        tabIndex={0}
+                        onClick={() => openArticle(article)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openArticle(article);
+                          }
                         }}
                       >
-                        {article.is_read ? "○" : "●"}
-                      </span>
-                    </div>
-                  </div>
-                  <h3
-                    style={{
-                      fontFamily: "'Newsreader', Georgia, serif",
-                      fontSize: isMobile ? 15 : 17,
-                      fontWeight: article.is_read ? 400 : 500,
-                      lineHeight: 1.35,
-                      color: article.is_read ? "#6a6050" : "#1a1510",
-                      marginBottom: 5,
-                    }}
-                  >
-                    {article.title}
-                  </h3>
-                  {!isMobile && (
-                    <p
-                      style={{
-                        fontSize: 13,
-                        color: "#8a7e6e",
-                        lineHeight: 1.5,
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                        overflow: "hidden",
-                      }}
-                    >
-                      {stripHtml(article.content).slice(0, 180)}
-                    </p>
+                        {!article.is_read && <span className="unread-dot" />}
+                        <div className="a-content">
+                          <div className="a-meta">
+                            <span className="feed-name">{article.feedName}</span>
+                            {article.author && (
+                              <>
+                                <span className="sep">.</span>
+                                <span className="author">{article.author}</span>
+                              </>
+                            )}
+                            <span className="time">{formatDate(article.published)}</span>
+                          </div>
+                          <div className="a-title">{article.title}</div>
+                          <div className="a-excerpt">{article.excerpt}</div>
+                          <div className="a-footer">
+                            <span className="read-time">
+                              {article.readTime}
+                            </span>
+                            {article.is_starred && (
+                              <span className="star-chip">
+                                <Icon name="starFill" className="icon-sm" />
+                              </span>
+                            )}
+                            <span className="spacer" />
+                            <button
+                              type="button"
+                              title={article.is_read ? "Mark as unread" : "Mark as read"}
+                              className={`read-toggle-btn${article.is_read ? "" : " unread"}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleRead(article.id);
+                              }}
+                            >
+                              {article.is_read ? "Mark unread" : "Mark read"}
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                          );
+                        })()}
+                      </div>
+                    ),
                   )}
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      marginTop: 5,
-                    }}
-                  >
-                    {article.author && (
-                      <span style={{ fontSize: 11, color: "#b0a690" }}>
-                        {article.author}
-                      </span>
-                    )}
-                    {article.is_starred && (
-                      <span style={{ color: "#d4a847", fontSize: 13 }}>★</span>
-                    )}
-                  </div>
-                </button>
-              ))
+                </div>
+              </div>
             )}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
+
 }
