@@ -7,6 +7,7 @@ import {
   addFeed as dbAddFeed,
   removeFeed as dbRemoveFeed,
   renameFeed as dbRenameFeed,
+  reorderFeeds as dbReorderFeeds,
   listArticles,
   upsertArticles,
   markRead as dbMarkRead,
@@ -610,6 +611,8 @@ export default function RSSReader() {
   const [showAddFeed, setShowAddFeed] = useState(false);
   const [editingFeed, setEditingFeed] = useState(null);
   const [editingName, setEditingName] = useState("");
+  const [draggedFeed, setDraggedFeed] = useState(null);
+  const [feedDropTarget, setFeedDropTarget] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
   const [viewFilter, setViewFilter] = useState("all");
   const [hydrated, setHydrated] = useState(false);
@@ -890,6 +893,46 @@ export default function RSSReader() {
       );
     setEditingFeed(null);
     void runSync();
+  };
+
+  const commitFeedOrder = async (nextFeeds) => {
+    setFeeds(nextFeeds);
+    try {
+      await dbReorderFeeds(nextFeeds.map((feed) => feed.url));
+    } catch (e) {
+      console.error("reorder feeds error:", e);
+      setFeeds(await listFeeds());
+    }
+  };
+
+  const moveFeed = (sourceUrl, targetUrl, edge = "before") => {
+    if (!sourceUrl || sourceUrl === targetUrl) return;
+    const source = feeds.find((feed) => feed.url === sourceUrl);
+    const remaining = feeds.filter((feed) => feed.url !== sourceUrl);
+    const targetIndex = remaining.findIndex((feed) => feed.url === targetUrl);
+    if (!source || targetIndex < 0) return;
+    const insertIndex = targetIndex + (edge === "after" ? 1 : 0);
+    const nextFeeds = [...remaining];
+    nextFeeds.splice(insertIndex, 0, source);
+    void commitFeedOrder(nextFeeds);
+  };
+
+  const handleFeedDragOver = (event, targetUrl) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const edge = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+    setFeedDropTarget({ url: targetUrl, edge });
+  };
+
+  const handleFeedDrop = (event, targetUrl) => {
+    event.preventDefault();
+    const sourceUrl = draggedFeed || event.dataTransfer.getData("text/plain");
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const edge = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+    moveFeed(sourceUrl, targetUrl, edge);
+    setDraggedFeed(null);
+    setFeedDropTarget(null);
   };
 
   const addSampleFeed = async (sample) => {
@@ -1297,7 +1340,47 @@ export default function RSSReader() {
               const count = unreadCount(feed.url);
               const active = selectedFeed === feed.url;
               return (
-                <div key={feed.url} className="feed-row">
+                <div
+                  key={feed.url}
+                  className={`feed-row${draggedFeed === feed.url ? " dragging" : ""}`}
+                  data-drop-edge={feedDropTarget?.url === feed.url ? feedDropTarget.edge : undefined}
+                  onDragOver={(event) => handleFeedDragOver(event, feed.url)}
+                  onDrop={(event) => handleFeedDrop(event, feed.url)}
+                >
+                  <span
+                    className="feed-drag-handle"
+                    role="button"
+                    tabIndex={0}
+                    draggable={editingFeed !== feed.url}
+                    aria-label={`Reorder ${feed.name}`}
+                    title="Drag to reorder"
+                    onDragStart={(event) => {
+                      setDraggedFeed(feed.url);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", feed.url);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedFeed(null);
+                      setFeedDropTarget(null);
+                    }}
+                    onKeyDown={(event) => {
+                      const index = feeds.findIndex((item) => item.url === feed.url);
+                      if (event.key === "ArrowUp" && index > 0) {
+                        event.preventDefault();
+                        moveFeed(feed.url, feeds[index - 1].url, "before");
+                      } else if (event.key === "ArrowDown" && index < feeds.length - 1) {
+                        event.preventDefault();
+                        moveFeed(feed.url, feeds[index + 1].url, "after");
+                      }
+                    }}
+                  >
+                    <span />
+                    <span />
+                    <span />
+                    <span />
+                    <span />
+                    <span />
+                  </span>
                   {editingFeed === feed.url ? (
                     <div className="feed-edit">
                       <span

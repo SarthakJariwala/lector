@@ -83,7 +83,9 @@ export async function initDb() {
 }
 
 export async function listFeeds() {
-  const rows = await db.select("SELECT url, name, added_at FROM feeds WHERE subscribed = 1 ORDER BY added_at ASC");
+  const rows = await db.select(
+    "SELECT url, name, added_at FROM feeds WHERE subscribed = 1 ORDER BY sort_order ASC, added_at ASC"
+  );
   return rows.map((r) => ({ url: r.url, name: r.name, addedAt: new Date(r.added_at).toISOString() }));
 }
 
@@ -95,13 +97,14 @@ export async function addFeed({ url, name, addedAt }) {
 
     await db.execute(
       `INSERT INTO feeds (
-         url, name, added_at, subscribed,
+         url, name, added_at, sort_order, subscribed,
          subscription_changed_at, subscription_changed_by,
          name_changed_at, name_changed_by
-       ) VALUES ($1, $2, $3, 1, $4, $5, $4, $5)
+       ) VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM feeds), 1, $4, $5, $4, $5)
        ON CONFLICT(url) DO UPDATE SET
          name = excluded.name,
          added_at = CASE WHEN feeds.subscribed = 0 THEN excluded.added_at ELSE feeds.added_at END,
+         sort_order = CASE WHEN feeds.subscribed = 0 THEN excluded.sort_order ELSE feeds.sort_order END,
          subscribed = 1,
          subscription_changed_at = excluded.subscription_changed_at,
          subscription_changed_by = excluded.subscription_changed_by,
@@ -116,6 +119,17 @@ export async function addFeed({ url, name, addedAt }) {
       { feedUrl: url, name, subscribed: true, addedAt: ts, changedAt },
       deviceId
     );
+  });
+}
+
+export async function reorderFeeds(feedUrls) {
+  return withWriteLock(async () => {
+    for (let index = 0; index < feedUrls.length; index++) {
+      await db.execute(
+        "UPDATE feeds SET sort_order = $2 WHERE url = $1 AND subscribed = 1",
+        [feedUrls[index], index]
+      );
+    }
   });
 }
 
@@ -567,10 +581,10 @@ async function applyRemoteFeedChange(change) {
   if (existingRows.length === 0) {
     await db.execute(
       `INSERT INTO feeds (
-         url, name, added_at, subscribed,
+         url, name, added_at, sort_order, subscribed,
          subscription_changed_at, subscription_changed_by,
          name_changed_at, name_changed_by
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+       ) VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM feeds), $4, $5, $6, $7, $8)`,
       [
         feedUrl,
         incomingName,

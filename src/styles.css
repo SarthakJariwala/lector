@@ -306,10 +306,77 @@ a {
 }
 
 .feed-row {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   border-radius: var(--r-md);
+}
+
+.feed-row::after {
+  position: absolute;
+  right: 4px;
+  left: 4px;
+  z-index: 2;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+}
+
+.feed-row[data-drop-edge="before"]::after {
+  top: -1px;
+  opacity: 1;
+}
+
+.feed-row[data-drop-edge="after"]::after {
+  bottom: -1px;
+  opacity: 1;
+}
+
+.feed-row.dragging {
+  opacity: 0.45;
+}
+
+.feed-drag-handle {
+  display: grid;
+  grid-template-columns: repeat(2, 2px);
+  grid-template-rows: repeat(3, 2px);
+  gap: 2px;
+  width: 18px;
+  height: 30px;
+  place-content: center;
+  border-radius: 6px;
+  color: var(--ink-4);
+  cursor: grab;
+  opacity: 0;
+  outline: none;
+  transition: background 0.12s, color 0.12s, opacity 0.15s;
+}
+
+.feed-drag-handle > span {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.feed-row:hover .feed-drag-handle,
+.feed-drag-handle:focus-visible,
+.feed-row.dragging .feed-drag-handle {
+  opacity: 1;
+}
+
+.feed-drag-handle:hover,
+.feed-drag-handle:focus-visible {
+  background: var(--bg-rail-2);
+  color: var(--ink-2);
+}
+
+.feed-drag-handle:active {
+  cursor: grabbing;
 }
 
 .feed-row:hover .remove-btn,

@@ -69,6 +69,20 @@ pub fn run() {
             CREATE INDEX IF NOT EXISTS idx_sync_outbox_created_at ON sync_outbox(created_at);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "add_feed_sort_order",
+            sql: "ALTER TABLE feeds ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+
+            UPDATE feeds
+            SET sort_order = (
+                SELECT COUNT(*)
+                FROM feeds AS earlier
+                WHERE earlier.added_at < feeds.added_at
+                   OR (earlier.added_at = feeds.added_at AND earlier.url < feeds.url)
+            );",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
