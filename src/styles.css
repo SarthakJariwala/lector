@@ -314,6 +314,7 @@ a {
 
 .feed-row:hover .remove-btn,
 .remove-btn:focus-visible {
+  visibility: visible;
   opacity: 1;
 }
 
@@ -381,8 +382,9 @@ a {
   background: transparent;
   color: var(--ink-4);
   cursor: pointer;
+  visibility: hidden;
   opacity: 0;
-  transition: background 0.12s, color 0.12s, opacity 0.15s;
+  transition: background 0.12s, color 0.12s;
 }
 
 .remove-btn:hover {
