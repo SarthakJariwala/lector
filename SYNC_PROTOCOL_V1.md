@@ -5,7 +5,7 @@ This document defines the cross-device sync contract for Lector.
 ## Scope
 
 - One user with multiple personal devices.
-- Desktop first, iPhone later.
+- Desktop and private PWA clients.
 - Local-first UX on every device.
 - Cloud sync stores feed subscriptions and article read/star state only.
 
@@ -53,9 +53,12 @@ Only explicit set-style mutations are allowed:
 
 Toggle-style network mutations are forbidden.
 
-Each mutation must include:
+Each sync request must include:
 
 - `deviceId`
+
+Each mutation must include:
+
 - `mutationId` (monotonic per device)
 - `changedAt` (logical clock timestamp)
 
@@ -75,12 +78,20 @@ Fields resolve independently:
 
 ## Transport API
 
-`POST /v1/sync`
+The V1 body and response are available through two authenticated transports:
+
+- Desktop: `POST /v1/sync` with `Authorization: Bearer <SYNC_TOKEN>`
+- Private PWA: `POST /api/v1/sync` with a Cloudflare Access session
 
 Single round-trip endpoint for push + pull:
 
 - Request sends local mutations and last pulled cursor.
 - Response returns acknowledged mutation IDs and remote changes after cursor.
+- Clients must continue pulling while `hasMore` is `true`.
+
+On a fresh device, the client pulls subscriptions and article state before
+fetching the current contents of each subscribed feed. Article state may exist
+locally before the matching article body is available.
 
 ## Local Client Guarantees
 
@@ -88,6 +99,7 @@ Single round-trip endpoint for push + pull:
 - Sync is asynchronous.
 - Outbox retries are idempotent.
 - Local outbox entries are only removed after server ack.
+- Article bodies and feed ordering remain local to each device.
 
 ## Versioning
 

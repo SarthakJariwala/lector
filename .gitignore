@@ -13,6 +13,8 @@ src-tauri/gen/
 # Environment files
 .env
 .env.*
+.dev.vars
+.dev.vars.*
 
 # OS files
 .DS_Store

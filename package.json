@@ -4,9 +4,14 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "vite --mode web",
+    "dev:tauri": "vite --mode tauri",
+    "build": "vite build --mode tauri",
+    "build:web": "vite build --mode web",
     "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "deploy:web": "npm run build:web && npx wrangler deploy --config sync-worker/wrangler.toml",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -16,6 +21,9 @@
     "@tauri-apps/plugin-http": "^2.5.7",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@tauri-apps/plugin-sql": "^2.3.2",
+    "dompurify": "^3.4.13",
+    "idb": "^8.0.3",
+    "jose": "^6.2.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -24,6 +32,10 @@
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.0"
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^24.1.3",
+    "vite": "^6.4.3",
+    "vite-plugin-pwa": "^1.3.0",
+    "vitest": "^3.2.7"
   }
 }

@@ -1,6 +1,4 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { open } from "@tauri-apps/plugin-shell";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import {
   initDb,
   listFeeds,
@@ -19,6 +17,12 @@ import {
   getSyncConfig,
   setSyncConfig,
 } from "./db";
+import {
+  canConfigureSync,
+  fetchFeedText,
+  openExternal,
+} from "./platform";
+import { sanitizeArticleHtml } from "./article-content";
 
 const YOUTUBE_EMBED_HOSTS = new Set([
   "www.youtube.com",
@@ -104,7 +108,13 @@ function normalizeYouTubeEmbedSrc(src) {
     if (!videoId) return null;
     embedUrl = new URL(`https://www.youtube.com/embed/${videoId}`);
   } else if (parsed.pathname.startsWith("/embed/")) {
-    embedUrl = new URL(`${parsed.origin}${parsed.pathname}`);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const videoId = parts.length === 2 ? parseYouTubeVideoId(parts[1]) : null;
+    if (!videoId) return null;
+    const embedHost = host.includes("youtube-nocookie.com")
+      ? "www.youtube-nocookie.com"
+      : "www.youtube.com";
+    embedUrl = new URL(`https://${embedHost}/embed/${videoId}`);
   } else {
     return null;
   }
@@ -135,64 +145,92 @@ function extractAtomEntryContent(entry) {
 function parseRSS(xmlText) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlText, "text/xml");
+  if (doc.querySelector("parsererror")) {
+    throw new Error("Feed response was not valid XML");
+  }
   const isAtom = !!doc.querySelector("feed");
   const items = [];
   if (isAtom) {
     const feedTitle =
       doc.querySelector("feed > title")?.textContent || "Untitled";
-    doc.querySelectorAll("entry").forEach((entry) => {
+    Array.from(doc.querySelectorAll("entry")).slice(0, 500).forEach((entry) => {
       items.push({
-        title: entry.querySelector("title")?.textContent || "Untitled",
+        title: boundedText(entry.querySelector("title")?.textContent, 2000) || "Untitled",
         link:
-          entry.querySelector("link[rel='alternate']")?.getAttribute("href") ||
-          entry.querySelector("link")?.getAttribute("href") ||
-          "",
+          boundedText(
+            entry.querySelector("link[rel='alternate']")?.getAttribute("href") ||
+              entry.querySelector("link")?.getAttribute("href"),
+            4096,
+          ),
         published:
-          entry.querySelector("published")?.textContent ||
-          entry.querySelector("updated")?.textContent ||
-          "",
-        content: extractAtomEntryContent(entry),
-        author: entry.querySelector("author > name")?.textContent || "",
+          boundedText(
+            entry.querySelector("published")?.textContent ||
+              entry.querySelector("updated")?.textContent,
+            500,
+          ),
+        content: boundedText(extractAtomEntryContent(entry), 500000),
+        author: boundedText(entry.querySelector("author > name")?.textContent, 1000),
       });
     });
-    return { feedTitle, items };
+    return { feedTitle: boundedText(feedTitle, 2000), items };
   }
   const channel = doc.querySelector("channel");
   const feedTitle = channel?.querySelector("title")?.textContent || "Untitled";
-  doc.querySelectorAll("item").forEach((item) => {
+  Array.from(doc.querySelectorAll("item")).slice(0, 500).forEach((item) => {
     items.push({
-      title: item.querySelector("title")?.textContent || "Untitled",
-      link: item.querySelector("link")?.textContent || "",
+      title: boundedText(item.querySelector("title")?.textContent, 2000) || "Untitled",
+      link: boundedText(item.querySelector("link")?.textContent, 4096),
       published:
-        item.querySelector("pubDate")?.textContent ||
-        item.querySelector("dc\\:date")?.textContent ||
-        "",
+        boundedText(
+          item.querySelector("pubDate")?.textContent ||
+            item.querySelector("dc\\:date")?.textContent,
+          500,
+        ),
       content:
-        item.getElementsByTagName("content:encoded")[0]?.textContent ||
-        item.querySelector("description")?.textContent ||
-        "",
+        boundedText(
+          item.getElementsByTagName("content:encoded")[0]?.textContent ||
+            item.querySelector("description")?.textContent,
+          500000,
+        ),
       author:
-        item.getElementsByTagName("dc:creator")[0]?.textContent ||
-        item.querySelector("author")?.textContent ||
-        "",
+        boundedText(
+          item.getElementsByTagName("dc:creator")[0]?.textContent ||
+            item.querySelector("author")?.textContent,
+          1000,
+        ),
     });
   });
-  return { feedTitle, items };
+  return { feedTitle: boundedText(feedTitle, 2000), items };
+}
+
+function boundedText(value, maxLength) {
+  return String(value || "").trim().slice(0, maxLength);
 }
 
 async function fetchFeed(url) {
-  const resp = await tauriFetch(url, {
-    method: "GET",
-    headers: {
-      Accept:
-        "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
-      "User-Agent": "Lector/1.0",
-    },
-    connectTimeout: 12000,
-    maxRedirections: 10,
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return parseRSS(await resp.text());
+  return parseRSS(await fetchFeedText(url));
+}
+
+async function drainSync() {
+  let appliedChanges = 0;
+  let page = 0;
+  let previousCursor = -1;
+  while (true) {
+    const result = await syncStateWithServer();
+    appliedChanges += result?.appliedChanges || 0;
+    if (!result?.hasMore && !result?.hasPendingMutations) return { appliedChanges };
+    if (result.hasMore && result.nextCursor <= previousCursor) {
+      throw new Error("Sync cursor did not advance");
+    }
+    if (result.hasPendingMutations && result.ackedMutations <= 0) {
+      throw new Error("Sync did not acknowledge pending mutations");
+    }
+    if (result.hasMore) previousCursor = result.nextCursor;
+    page += 1;
+    if (page % 20 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
 }
 
 function formatDate(dateStr) {
@@ -345,7 +383,16 @@ function processArticleContent(html) {
     wrapper.appendChild(iframe);
   });
 
-  return doc.body.innerHTML;
+  doc.querySelectorAll("img").forEach((image) => {
+    image.setAttribute("loading", "lazy");
+    image.setAttribute("referrerpolicy", "no-referrer");
+  });
+  doc.querySelectorAll("a").forEach((anchor) => {
+    anchor.setAttribute("rel", "noopener noreferrer");
+    anchor.removeAttribute("target");
+  });
+
+  return sanitizeArticleHtml(doc.body.innerHTML);
 }
 
 const SAMPLE_FEEDS = [
@@ -600,6 +647,7 @@ function useIsMobile() {
 
 export default function RSSReader() {
   const isMobile = useIsMobile();
+  const syncSettingsAvailable = canConfigureSync();
   const [feeds, setFeeds] = useState([]);
   const [articles, setArticles] = useState([]);
   const [selectedFeed, setSelectedFeed] = useState(null);
@@ -644,8 +692,8 @@ export default function RSSReader() {
     if (!syncConfigured || syncInFlight.current) return;
     syncInFlight.current = true;
     try {
-      const result = await syncStateWithServer();
-      if (result?.appliedChanges > 0) {
+      const { appliedChanges } = await drainSync();
+      if (appliedChanges > 0) {
         setFeeds(await listFeeds());
         await reloadArticles();
       }
@@ -680,7 +728,7 @@ export default function RSSReader() {
         endpoint,
         token,
       });
-      const configured = !!cfg.endpoint && !!cfg.token;
+      const configured = cfg.configured ?? (!!cfg.endpoint && !!cfg.token);
       setSyncConfigured(configured);
       if (configured) {
         await runSync();
@@ -718,9 +766,17 @@ export default function RSSReader() {
       await initDb();
       await importFromLocalStorageIfNeeded();
       const syncCfg = await getSyncConfig();
+      const configured = syncCfg.configured ?? (!!syncCfg.endpoint && !!syncCfg.token);
+      if (configured && navigator.onLine) {
+        try {
+          await drainSync();
+        } catch (e) {
+          console.error("initial sync error:", e);
+        }
+      }
       const dbFeeds = await listFeeds();
       if (cancelled) return;
-      setSyncConfigured(!!syncCfg.endpoint && !!syncCfg.token);
+      setSyncConfigured(configured);
       setSyncEndpointInput(syncCfg.endpoint || "");
       setSyncTokenInput(syncCfg.token || "");
       setFeeds(dbFeeds);
@@ -877,7 +933,7 @@ export default function RSSReader() {
   };
 
   const handleRenameFeed = async (url, newName) => {
-    const trimmed = newName.trim();
+    const trimmed = newName.trim().slice(0, 2000);
     if (!trimmed) {
       setEditingFeed(null);
       return;
@@ -1141,7 +1197,7 @@ export default function RSSReader() {
         />
       )}
 
-      {showSyncConfig && (
+      {syncSettingsAvailable && showSyncConfig && (
         <div className="modal-backdrop" onClick={() => setShowSyncConfig(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-heading">
@@ -1169,7 +1225,7 @@ export default function RSSReader() {
               type="url"
               value={syncEndpointInput}
               onChange={(e) => setSyncEndpointInput(e.target.value)}
-              placeholder="https://lector-sync.your-subdomain.workers.dev/v1/sync"
+              placeholder="https://sync.lector.sarthakjariwala.com/v1/sync"
             />
 
             <label className="field-label" htmlFor="sync-token">
@@ -1458,17 +1514,21 @@ export default function RSSReader() {
           <span>
             <span className={`sync-dot ${syncConfigured ? "on" : ""}`} />
             <span className="sync-label">
-              {syncConfigured ? "Sync enabled" : "Local only"}
+              {syncConfigured
+                ? (syncSettingsAvailable ? "Sync enabled" : "Private sync")
+                : "Local only"}
             </span>
           </span>
-          <button
-            type="button"
-            className="footer-btn"
-            title="Sync settings"
-            onClick={() => void openSyncConfigDialog()}
-          >
-            <Icon name="settings" className="icon-sm" />
-          </button>
+          {syncSettingsAvailable && (
+            <button
+              type="button"
+              className="footer-btn"
+              title="Sync settings"
+              onClick={() => void openSyncConfigDialog()}
+            >
+              <Icon name="settings" className="icon-sm" />
+            </button>
+          )}
         </div>
       </aside>
 
@@ -1528,20 +1588,22 @@ export default function RSSReader() {
               <button
                 type="button"
                 className="pill-btn"
-                onClick={() => open(selectedArticle.link)}
+                onClick={() => void openExternal(selectedArticle.link)}
               >
                 <Icon name="external" className="icon-sm" />
                 Open original
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => void openSyncConfigDialog()}
-              className="icon-btn"
-              title={syncConfigured ? "Sync settings" : "Setup sync"}
-            >
-              <Icon name="settings" />
-            </button>
+            {syncSettingsAvailable && (
+              <button
+                type="button"
+                onClick={() => void openSyncConfigDialog()}
+                className="icon-btn"
+                title={syncConfigured ? "Sync settings" : "Setup sync"}
+              >
+                <Icon name="settings" />
+              </button>
+            )}
             {!selectedArticle && (
               <button
                 type="button"
@@ -1591,7 +1653,7 @@ export default function RSSReader() {
                   <button
                     type="button"
                     className="action"
-                    onClick={() => open(selectedArticle.link)}
+                    onClick={() => void openExternal(selectedArticle.link)}
                   >
                     <Icon name="external" className="icon-sm" />
                     Open original
@@ -1602,9 +1664,13 @@ export default function RSSReader() {
                 className="article-body reader-body"
                 onClick={(e) => {
                   const anchor = e.target.closest("a");
-                  if (anchor?.href) {
+                  const href = anchor?.getAttribute("href");
+                  if (href) {
                     e.preventDefault();
-                    open(anchor.href);
+                    void openExternal(
+                      href,
+                      selectedArticle.link || selectedArticle.feedUrl,
+                    );
                   }
                 }}
                 dangerouslySetInnerHTML={{
