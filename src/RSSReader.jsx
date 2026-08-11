@@ -1,4 +1,11 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import {
   initDb,
   listFeeds,
@@ -408,8 +415,8 @@ const SAMPLE_FEEDS = [
 
 const ARTICLE_GROUPS = ["Today", "Yesterday", "This week", "Earlier"];
 const DATE_DIVIDER_ROW_HEIGHT = 42;
-const ARTICLE_ROW_HEIGHT_DESKTOP = 176;
-const ARTICLE_ROW_HEIGHT_MOBILE = 192;
+const ESTIMATED_ARTICLE_ROW_HEIGHT_DESKTOP = 176;
+const ESTIMATED_ARTICLE_ROW_HEIGHT_MOBILE = 192;
 const LIST_OVERSCAN_PX = 1100;
 
 const FEED_COLORS = [
@@ -592,11 +599,13 @@ function buildVirtualRows(groupedArticles) {
   });
 }
 
-function addVirtualLayout(rows, articleRowHeight) {
+function addVirtualLayout(rows, articleRowHeights, estimatedArticleRowHeight) {
   let offset = 0;
   const items = rows.map((row) => {
     const height =
-      row.type === "divider" ? DATE_DIVIDER_ROW_HEIGHT : articleRowHeight;
+      row.type === "divider"
+        ? DATE_DIVIDER_ROW_HEIGHT
+        : articleRowHeights[row.id] || estimatedArticleRowHeight;
     const item = { ...row, offset, height };
     offset += height;
     return item;
@@ -633,6 +642,42 @@ function getVisibleVirtualRows(items, scrollTop, viewportHeight) {
   const start = Math.max(0, firstRowEndingAfter(items, startY) - 2);
   const end = Math.min(items.length, firstRowStartingAtOrAfter(items, endY) + 2);
   return items.slice(start, end);
+}
+
+function MeasuredArticleRow({ row, onHeightChange, children }) {
+  const rowRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const card = rowRef.current?.querySelector(".article-card");
+    if (!card) return undefined;
+
+    const measure = () => {
+      const style = window.getComputedStyle(card);
+      const margins =
+        (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+      onHeightChange(row.id, Math.ceil(card.getBoundingClientRect().height + margins));
+    };
+    measure();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [onHeightChange, row.id]);
+
+  return (
+    <div
+      ref={rowRef}
+      className="virtual-row article-row"
+      style={{ "--row-y": `${row.offset}px`, height: `${row.height}px` }}
+    >
+      {children}
+    </div>
+  );
 }
 
 function useIsMobile() {
@@ -677,6 +722,11 @@ export default function RSSReader() {
   const [listViewport, setListViewport] = useState({
     scrollTop: 0,
     height: typeof window === "undefined" ? 800 : window.innerHeight,
+    width: typeof window === "undefined" ? 0 : window.innerWidth,
+  });
+  const [articleRowMeasurements, setArticleRowMeasurements] = useState({
+    layoutKey: "",
+    heights: {},
   });
   const loadSeq = useRef(0);
   const syncInFlight = useRef(false);
@@ -850,8 +900,11 @@ export default function RSSReader() {
         const next = {
           scrollTop: el.scrollTop,
           height: el.clientHeight || prev.height,
+          width: el.clientWidth || prev.width,
         };
-        return prev.scrollTop === next.scrollTop && prev.height === next.height
+        return prev.scrollTop === next.scrollTop &&
+          prev.height === next.height &&
+          prev.width === next.width
           ? prev
           : next;
       });
@@ -1069,8 +1122,11 @@ export default function RSSReader() {
       const next = {
         scrollTop: el.scrollTop,
         height: el.clientHeight || prev.height,
+        width: el.clientWidth || prev.width,
       };
-      return prev.scrollTop === next.scrollTop && prev.height === next.height
+      return prev.scrollTop === next.scrollTop &&
+        prev.height === next.height &&
+        prev.width === next.width
         ? prev
         : next;
     });
@@ -1137,12 +1193,35 @@ export default function RSSReader() {
     () => buildVirtualRows(groupedArticles),
     [groupedArticles],
   );
-  const articleRowHeight = isMobile
-    ? ARTICLE_ROW_HEIGHT_MOBILE
-    : ARTICLE_ROW_HEIGHT_DESKTOP;
+  const estimatedArticleRowHeight = isMobile
+    ? ESTIMATED_ARTICLE_ROW_HEIGHT_MOBILE
+    : ESTIMATED_ARTICLE_ROW_HEIGHT_DESKTOP;
+  const articleLayoutKey = `${isMobile ? "mobile" : "desktop"}:${listViewport.width}`;
+  const articleRowHeights =
+    articleRowMeasurements.layoutKey === articleLayoutKey
+      ? articleRowMeasurements.heights
+      : {};
+  const handleArticleRowHeightChange = useCallback(
+    (id, height) => {
+      setArticleRowMeasurements((prev) => {
+        const heights = prev.layoutKey === articleLayoutKey ? prev.heights : {};
+        if (prev.layoutKey === articleLayoutKey && heights[id] === height) return prev;
+        return {
+          layoutKey: articleLayoutKey,
+          heights: { ...heights, [id]: height },
+        };
+      });
+    },
+    [articleLayoutKey],
+  );
   const { items: virtualRows, totalHeight: virtualListHeight } = useMemo(
-    () => addVirtualLayout(rawVirtualRows, articleRowHeight),
-    [articleRowHeight, rawVirtualRows],
+    () =>
+      addVirtualLayout(
+        rawVirtualRows,
+        articleRowHeights,
+        estimatedArticleRowHeight,
+      ),
+    [articleRowHeights, estimatedArticleRowHeight, rawVirtualRows],
   );
   const visibleRows = useMemo(
     () =>
@@ -1749,10 +1828,7 @@ export default function RSSReader() {
                 </div>
                 <div
                   className="virtual-list"
-                  style={{
-                    "--article-row-height": `${articleRowHeight}px`,
-                    height: `${virtualListHeight}px`,
-                  }}
+                  style={{ height: `${virtualListHeight}px` }}
                 >
                   {visibleRows.map((row) =>
                     row.type === "divider" ? (
@@ -1764,10 +1840,10 @@ export default function RSSReader() {
                         <div className="date-divider">{row.label}</div>
                       </div>
                     ) : (
-                      <div
+                      <MeasuredArticleRow
                         key={row.id}
-                        className="virtual-row article-row"
-                        style={{ "--row-y": `${row.offset}px` }}
+                        row={row}
+                        onHeightChange={handleArticleRowHeightChange}
                       >
                         {(() => {
                           const article = row.article;
@@ -1825,7 +1901,7 @@ export default function RSSReader() {
                       </article>
                           );
                         })()}
-                      </div>
+                      </MeasuredArticleRow>
                     ),
                   )}
                 </div>

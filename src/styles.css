@@ -797,10 +797,6 @@ a {
   margin: 16px 6px 8px;
 }
 
-.article-row {
-  height: var(--article-row-height);
-}
-
 .article-card {
   position: relative;
   display: block;
@@ -814,11 +810,6 @@ a {
   padding: 16px 18px;
   text-align: left;
   transition: box-shadow 0.18s, transform 0.12s, border-color 0.18s, opacity 0.15s;
-}
-
-.article-row .article-card {
-  height: calc(var(--article-row-height) - 8px);
-  overflow: hidden;
 }
 
 .article-card:hover,
